@@ -1,0 +1,22 @@
+[Unit]
+Description=QuickPrint Pi Print Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quickprint
+Group=quickprint
+WorkingDirectory=/opt/quickprint-pi-agent
+EnvironmentFile=/opt/quickprint-pi-agent/.env
+ExecStart=/opt/quickprint-pi-agent/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+# Hardening (adjust if needed for CUPS)
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

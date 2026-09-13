@@ -1,0 +1,17 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+data/*.db
+jobs/incoming/*
+!jobs/incoming/.gitkeep
+jobs/processing/*
+!jobs/processing/.gitkeep
+jobs/completed/*
+!jobs/completed/.gitkeep
+jobs/failed/*
+!jobs/failed/.gitkeep
+logs/*
+!logs/.gitkeep
+.DS_Store
