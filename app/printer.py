@@ -34,8 +34,34 @@ class SubmitResult:
     printer_job_id: str
 
 
+class ExistingJobLookupStatus(str, Enum):
+    NOT_FOUND = "not_found"
+    FOUND = "found"
+    AMBIGUOUS = "ambiguous"
+    LOOKUP_FAILED = "lookup_failed"
+
+
+@dataclass
+class ExistingJobLookup:
+    status: ExistingJobLookupStatus
+    printer_job_id: str | None = None
+    message: str | None = None
+
+
 class PrinterError(Exception):
     """Printer operation failed."""
+
+
+class PrinterUnavailableError(PrinterError):
+    """Printer or CUPS scheduler unavailable."""
+
+
+class PrinterSubmissionError(PrinterError):
+    """Job submission or cancel failed."""
+
+
+class PrinterSubmissionUncertainError(PrinterError):
+    """Submission outcome unknown; do not retry or resubmit."""
 
 
 class Printer(ABC):
@@ -60,6 +86,16 @@ class Printer(ABC):
     async def health_check(self) -> bool:
         ...
 
+    async def is_available(self) -> bool:
+        return await self.health_check()
+
+    async def get_printer_info(self) -> dict[str, str | bool]:
+        return {"available": await self.is_available()}
+
+    async def find_existing_job(self, backend_job_id: str) -> ExistingJobLookup:
+        """Search for an already-submitted printer job for this backend job id."""
+        return ExistingJobLookup(status=ExistingJobLookupStatus.NOT_FOUND)
+
 
 def create_printer(settings: Settings) -> Printer:
     if settings.printer_mode == "mock":
@@ -72,5 +108,8 @@ def create_printer(settings: Settings) -> Printer:
     if settings.printer_mode == "cups":
         from app.cups import CupsPrinter
 
-        return CupsPrinter(printer_name=settings.cups_printer_name)
+        return CupsPrinter(
+            printer_name=settings.cups_printer_name,
+            command_timeout_seconds=settings.cups_command_timeout_seconds,
+        )
     raise ValueError(f"Unknown printer mode: {settings.printer_mode}")

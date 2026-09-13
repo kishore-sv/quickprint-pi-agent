@@ -10,6 +10,9 @@ Group=quickprint
 WorkingDirectory=/opt/quickprint-pi-agent
 EnvironmentFile=/opt/quickprint-pi-agent/.env
 ExecStart=/opt/quickprint-pi-agent/.venv/bin/python -m app.main
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartSec=5
 KillMode=mixed

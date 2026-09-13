@@ -13,6 +13,18 @@ class ConfigurationError(Exception):
     """Raised when required configuration is missing or invalid."""
 
 
+def _env(name: str, fallback: str = "") -> str:
+    return os.environ.get(name, fallback).strip()
+
+
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        val = os.environ.get(name)
+        if val is not None and val.strip():
+            return val.strip()
+    return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -70,6 +82,11 @@ class Settings:
     download_timeout_seconds: int
     heartbeat_interval_seconds: int
     ws_reconnect_max_delay_seconds: int
+    retry_max_attempts: int
+    retry_base_delay_seconds: float
+    retry_max_delay_seconds: float
+    cups_command_timeout_seconds: float
+    job_poll_interval_seconds: float
 
     @property
     def is_development(self) -> bool:
@@ -95,27 +112,23 @@ class Settings:
 def load_settings() -> Settings:
     _load_dotenv()
 
-    agent_env = os.environ.get("AGENT_ENV", "development").strip().lower()
-    agent_id = os.environ.get("AGENT_ID", "").strip()
-    agent_secret = os.environ.get("AGENT_SECRET", "").strip()
-    backend_url = os.environ.get("BACKEND_URL", "").strip()
-    backend_ws_url = os.environ.get("BACKEND_WS_URL", "").strip()
+    agent_env = _env_first("AGENT_ENV", "ENVIRONMENT", default="development").lower()
+    agent_id = _env("AGENT_ID")
+    agent_secret = _env_first("AGENT_SECRET", "AGENT_TOKEN")
+    backend_url = _env_first("BACKEND_URL", "BACKEND_API_URL")
+    backend_ws_url = _env("BACKEND_WS_URL")
 
-    job_directory = Path(
-        os.environ.get("JOB_DIRECTORY", "jobs").strip() or "jobs"
-    )
+    job_directory = Path(_env("JOB_DIRECTORY", "jobs") or "jobs")
     if not job_directory.is_absolute():
         job_directory = PROJECT_ROOT / job_directory
 
-    database_path = Path(
-        os.environ.get("DATABASE_PATH", "data/agent.db").strip() or "data/agent.db"
-    )
+    database_path = Path(_env("DATABASE_PATH", "data/agent.db") or "data/agent.db")
     if not database_path.is_absolute():
         database_path = PROJECT_ROOT / database_path
 
-    printer_mode = os.environ.get("PRINTER_MODE", "mock").strip().lower()
-    cups_printer_name = os.environ.get("CUPS_PRINTER_NAME", "").strip()
-    log_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    printer_mode = _env("PRINTER_MODE", "mock").lower()
+    cups_printer_name = _env_first("CUPS_PRINTER_NAME", "PRINTER_NAME")
+    log_level = _env("LOG_LEVEL", "INFO").upper()
 
     settings = Settings(
         agent_env=agent_env,
@@ -128,12 +141,17 @@ def load_settings() -> Settings:
         printer_mode=printer_mode,
         cups_printer_name=cups_printer_name,
         log_level=log_level,
-        max_download_bytes=_env_int("MAX_DOWNLOAD_BYTES", 52_428_800),
+        max_download_bytes=_env_int("MAX_DOWNLOAD_BYTES", _env_int("DOWNLOAD_MAX_BYTES", 52_428_800)),
         mock_print_delay_seconds=_env_float("MOCK_PRINT_DELAY_SECONDS", 0.1),
         mock_print_failure=_env_bool("MOCK_PRINT_FAILURE", False),
         download_timeout_seconds=_env_int("DOWNLOAD_TIMEOUT_SECONDS", 120),
         heartbeat_interval_seconds=_env_int("HEARTBEAT_INTERVAL_SECONDS", 30),
         ws_reconnect_max_delay_seconds=_env_int("WS_RECONNECT_MAX_DELAY_SECONDS", 60),
+        retry_max_attempts=_env_int("RETRY_MAX_ATTEMPTS", 3),
+        retry_base_delay_seconds=_env_float("RETRY_BASE_DELAY_SECONDS", 1.0),
+        retry_max_delay_seconds=_env_float("RETRY_MAX_DELAY_SECONDS", 30.0),
+        cups_command_timeout_seconds=_env_float("CUPS_COMMAND_TIMEOUT_SECONDS", 30.0),
+        job_poll_interval_seconds=_env_float("JOB_POLL_INTERVAL_SECONDS", 1.0),
     )
 
     _validate_settings(settings)
@@ -148,7 +166,7 @@ def _validate_settings(settings: Settings) -> None:
 
     if settings.printer_mode == "cups" and not settings.cups_printer_name:
         raise ConfigurationError(
-            "CUPS_PRINTER_NAME is required when PRINTER_MODE=cups"
+            "CUPS_PRINTER_NAME (or PRINTER_NAME) is required when PRINTER_MODE=cups"
         )
 
     if settings.is_development:
@@ -158,7 +176,7 @@ def _validate_settings(settings: Settings) -> None:
     if not settings.agent_id:
         missing.append("AGENT_ID")
     if not settings.agent_secret:
-        missing.append("AGENT_SECRET")
+        missing.append("AGENT_SECRET/AGENT_TOKEN")
     if not settings.backend_ws_url:
         missing.append("BACKEND_WS_URL")
     if missing:

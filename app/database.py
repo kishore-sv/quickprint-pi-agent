@@ -128,6 +128,23 @@ class Database:
             )
             self._conn.commit()
 
+    def merge_metadata(self, backend_job_id: str, updates: dict[str, Any]) -> None:
+        record = self.get_by_backend_id(backend_job_id)
+        if record is None:
+            raise KeyError(f"Job not found: {backend_job_id}")
+        meta = record.metadata_dict()
+        meta.update(updates)
+        now = utc_now_iso()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE jobs SET metadata_json = ?, updated_at = ?
+                WHERE backend_job_id = ?
+                """,
+                (json.dumps(meta), now, backend_job_id),
+            )
+            self._conn.commit()
+
     def increment_attempt(self, backend_job_id: str) -> None:
         now = utc_now_iso()
         with self._lock:

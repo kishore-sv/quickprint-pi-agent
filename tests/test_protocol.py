@@ -29,6 +29,18 @@ def test_parse_job_assigned():
     assert job.print_settings.copies == 2
 
 
+def test_invalid_job_assigned_url():
+    raw = json.dumps(
+        {
+            "type": "job.assigned",
+            "job_id": "j1",
+            "file_url": "ftp://bad.example.com/f.pdf",
+        }
+    )
+    with pytest.raises(ValueError):
+        assigned_job_from_message(parse_message(raw))
+
+
 def test_malformed_message():
     with pytest.raises(ProtocolError):
         parse_message("not json")

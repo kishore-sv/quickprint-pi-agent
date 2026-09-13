@@ -6,8 +6,10 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from app.models import AssignedJob
+from app.page_range import validate_page_range
 
 
 class InboundType(str, Enum):
@@ -38,6 +40,41 @@ class ProtocolError(Exception):
     """Invalid protocol message."""
 
 
+def validate_job_assigned_payload(payload: dict[str, Any]) -> None:
+    job_id = payload.get("job_id")
+    if not job_id or not isinstance(job_id, str) or not job_id.strip():
+        raise ValueError("job.assigned requires non-empty string job_id")
+
+    file_url = payload.get("file_url")
+    if not file_url or not isinstance(file_url, str) or not file_url.strip():
+        raise ValueError("job.assigned requires non-empty string file_url")
+    parsed = urlparse(file_url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("file_url must use http or https")
+
+    filename = payload.get("filename")
+    if filename is not None and not isinstance(filename, str):
+        raise ValueError("filename must be a string")
+
+    settings_raw = payload.get("print_settings") or {}
+    if not isinstance(settings_raw, dict):
+        raise ValueError("print_settings must be an object")
+
+    copies = settings_raw.get("copies", 1)
+    try:
+        copies_int = int(copies)
+    except (TypeError, ValueError):
+        raise ValueError("copies must be an integer") from None
+    if copies_int < 1 or copies_int > 99:
+        raise ValueError("copies must be between 1 and 99")
+
+    page_range = settings_raw.get("page_range")
+    if page_range is not None:
+        if not isinstance(page_range, str):
+            raise ValueError("page_range must be a string")
+        validate_page_range(page_range)
+
+
 def parse_message(raw: str) -> InboundMessage:
     try:
         data = json.loads(raw)
@@ -58,6 +95,7 @@ def parse_message(raw: str) -> InboundMessage:
 def assigned_job_from_message(msg: InboundMessage) -> AssignedJob:
     if msg.type != InboundType.JOB_ASSIGNED:
         raise ProtocolError("Not a job.assigned message")
+    validate_job_assigned_payload(msg.payload)
     return AssignedJob.from_protocol_payload(msg.payload)
 
 
@@ -77,6 +115,7 @@ def status_message_for_job_status(status: str, job_id: str, **extra: Any) -> str
         "COMPLETED": OutboundType.JOB_COMPLETED,
         "FAILED": OutboundType.JOB_FAILED,
         "CANCELLED": OutboundType.JOB_FAILED,
+        "RETRY_WAITING": OutboundType.JOB_FAILED,
     }
     outbound = mapping.get(status)
     if outbound is None:
@@ -84,5 +123,8 @@ def status_message_for_job_status(status: str, job_id: str, **extra: Any) -> str
     return build_outbound(outbound, job_id=job_id, **extra)
 
 
-def build_heartbeat(agent_id: str) -> str:
-    return build_outbound(OutboundType.AGENT_HEARTBEAT, agent_id=agent_id)
+def build_heartbeat(agent_id: str, health: dict[str, Any] | None = None) -> str:
+    fields: dict[str, Any] = {"agent_id": agent_id}
+    if health:
+        fields["health"] = health
+    return build_outbound(OutboundType.AGENT_HEARTBEAT, **fields)

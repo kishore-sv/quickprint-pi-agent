@@ -20,6 +20,14 @@ class DownloadError(Exception):
     """Download failed."""
 
 
+class RetryableDownloadError(DownloadError):
+    """Transient download failure."""
+
+
+class PermanentDownloadError(DownloadError):
+    """Non-retryable download failure."""
+
+
 def sanitize_filename(name: str | None, fallback: str = "job.pdf") -> str:
     if not name or not name.strip():
         return fallback
@@ -44,12 +52,14 @@ def _download_sync(
     try:
         with urlopen(req, timeout=timeout_seconds) as resp:
             if resp.status and resp.status >= 400:
-                raise DownloadError(f"HTTP {resp.status}")
+                if resp.status >= 500:
+                    raise RetryableDownloadError(f"HTTP {resp.status}")
+                raise PermanentDownloadError(f"HTTP {resp.status}")
             content_length = resp.headers.get("Content-Length")
             if content_length is not None:
                 try:
                     if int(content_length) > max_bytes:
-                        raise DownloadError(
+                        raise PermanentDownloadError(
                             f"File exceeds maximum size ({max_bytes} bytes)"
                         )
                 except ValueError:
@@ -65,14 +75,16 @@ def _download_sync(
                     if total > max_bytes:
                         out.close()
                         dest_part.unlink(missing_ok=True)
-                        raise DownloadError(
+                        raise PermanentDownloadError(
                             f"Download exceeded maximum size ({max_bytes} bytes)"
                         )
                     out.write(chunk)
     except HTTPError as e:
-        raise DownloadError(f"HTTP error {e.code}") from e
+        if e.code >= 500:
+            raise RetryableDownloadError(f"HTTP error {e.code}") from e
+        raise PermanentDownloadError(f"HTTP error {e.code}") from e
     except URLError as e:
-        raise DownloadError(f"URL error: {e.reason}") from e
+        raise RetryableDownloadError(f"URL error: {e.reason}") from e
 
 
 class Downloader:

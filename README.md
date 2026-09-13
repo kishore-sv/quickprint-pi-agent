@@ -1,16 +1,18 @@
 # QuickPrint Pi Agent
 
-Production-oriented Raspberry Pi print agent for the QuickPrint college self-service printing system. This repository runs on a Raspberry Pi connected to a physical printer and executes print jobs authorized by the QuickPrint backend.
+Production-oriented Raspberry Pi print agent for the QuickPrint college self-service printing system. Runs on a Raspberry Pi connected to a printer and executes jobs authorized by the QuickPrint backend over WebSocket.
 
-The agent is **separate** from the QuickPrint Next.js frontend and Express backend. It does not access PostgreSQL, Razorpay, or payment logic.
+Separate from the Next.js frontend and Express backend. No PostgreSQL, Razorpay, Redis, or payment logic on the Pi.
+
+**Physical printing is not verified in this repository** — CUPS behavior is covered by automated tests with a fake command runner. Paper output requires a real printer on the Pi.
 
 ## Requirements
 
-- Python **3.13+**
-- macOS or Linux for development (mock printer)
-- Raspberry Pi OS Lite 64-bit for production (CUPS when hardware is available)
+- Python **3.13+** (3.11+ may work for local dev; Pi target is 3.13)
+- macOS or Linux for development (`PRINTER_MODE=mock`)
+- Raspberry Pi OS Lite 64-bit / Debian for production (`PRINTER_MODE=cups`)
 
-## Quick start (development, mock printer)
+## Mac development
 
 ```bash
 cd quickprint-pi-agent
@@ -27,136 +29,124 @@ AGENT_ENV=development
 PRINTER_MODE=mock
 ```
 
-Run:
+Run the agent:
 
 ```bash
 python -m app.main
 ```
 
-Without `BACKEND_WS_URL`, the agent starts locally without connecting to the backend.
+Without `BACKEND_WS_URL`, the WebSocket client stays disabled; jobs can still be driven via tests or `scripts/test_mock_job.py`.
 
-Run tests:
+Run tests (no CUPS or printer required on Mac):
 
 ```bash
 pytest
+python scripts/test_mock_job.py
 ```
+
+## Architecture
+
+```
+Backend WebSocket → WebSocketClient → JobManager
+                         ↓
+                    SQLite (local state)
+                         ↓
+                    Downloader → Printer (MockPrinter | CupsPrinter)
+```
+
+CUPS CLI (`lp`, `lpstat`, `cancel`) is **only** used inside [`app/cups.py`](app/cups.py) via an injectable [`CupsCommandRunner`](app/cups_command.py).
 
 ## Configuration
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_ENV` | `development` or production-style (non-development) |
-| `AGENT_ID` | Device identity (required in production) |
-| `AGENT_SECRET` | Device secret stored only on the Pi (required in production) |
-| `BACKEND_URL` | HTTP base URL (reserved for future use) |
+| `AGENT_ENV` / `ENVIRONMENT` | `development` or production-style |
+| `AGENT_ID` | Device ID (required in production) |
+| `AGENT_SECRET` / `AGENT_TOKEN` | Device secret (never commit) |
+| `BACKEND_URL` / `BACKEND_API_URL` | HTTP base (reserved) |
 | `BACKEND_WS_URL` | WebSocket URL (required in production) |
-| `JOB_DIRECTORY` | Root for `incoming/`, `processing/`, `completed/`, `failed/` |
+| `JOB_DIRECTORY` | Root for `jobs/{incoming,processing,completed,failed}` |
 | `DATABASE_PATH` | SQLite path (default `data/agent.db`) |
 | `PRINTER_MODE` | `mock` or `cups` |
-| `CUPS_PRINTER_NAME` | CUPS queue name when `PRINTER_MODE=cups` |
-| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `MAX_DOWNLOAD_BYTES` | Maximum download size |
-| `MOCK_PRINT_DELAY_SECONDS` | Simulated print duration |
-| `MOCK_PRINT_FAILURE` | `true` to simulate printer failure |
-| `DOWNLOAD_TIMEOUT_SECONDS` | HTTP download timeout |
-| `HEARTBEAT_INTERVAL_SECONDS` | WebSocket heartbeat interval |
-| `WS_RECONNECT_MAX_DELAY_SECONDS` | Max reconnect backoff |
+| `CUPS_PRINTER_NAME` / `PRINTER_NAME` | CUPS queue name when `cups` |
+| `LOG_LEVEL` | Logging level |
+| `MAX_DOWNLOAD_BYTES` / `DOWNLOAD_MAX_BYTES` | Max download size |
+| `DOWNLOAD_TIMEOUT_SECONDS` | HTTP timeout |
+| `RETRY_MAX_ATTEMPTS` | Max download/retry attempts before `FAILED` |
+| `RETRY_BASE_DELAY_SECONDS` | Retry backoff base |
+| `RETRY_MAX_DELAY_SECONDS` | Retry backoff cap |
+| `CUPS_COMMAND_TIMEOUT_SECONDS` | Subprocess timeout for CUPS CLI |
+| `JOB_POLL_INTERVAL_SECONDS` | Printer status poll interval (default 1s) |
+| `MOCK_PRINT_*` | Mock printer delay/failure simulation |
 
-Never commit `.env` or device secrets. Use `.env.example` for placeholders only.
+## Print settings → CUPS
 
-**Note:** The kiosk QR token and `agent_secret` are different concepts. Do not use the QR token as device authentication.
+[`app/cups_options.py`](app/cups_options.py) maps `PrintSettings` to `lp -o` options (media, color, duplex, number-up, orientation, fit-to-page, page-ranges). [`app/page_range.py`](app/page_range.py) validates page ranges before submission.
 
-## Architecture
+## CUPS exactly-once limitation
 
-```
-QuickPrint Backend
-        |
-        | WebSocket (JSON protocol)
-        v
-+-----------------------------+
-| QuickPrint Pi Agent         |
-|  WebSocket Client           |
-|  Job Manager                |
-|  SQLite (local state)       |
-|  Downloader                 |
-|  Printer (Mock | CUPS)      |
-+-----------------------------+
-```
+CUPS does not guarantee exactly-once physical printing. The agent mitigates duplicates by persisting `cups_job_id`, monitoring in-flight jobs on recovery, and tagging submissions with a deterministic title (`QuickPrint:<backend_job_id>`) so a `READY` job without a stored ID can adopt an existing queue entry when `lpstat` lookup succeeds. If lookup is ambiguous or fails, the job moves to `FAILED` for backend reconciliation rather than submitting again.
 
-Modules live under `app/`:
+## Duplicate-print protection
 
-- `config.py` — environment configuration
-- `database.py` — SQLite persistence
-- `job_manager.py` — orchestration and recovery
-- `downloader.py` — streamed file download
-- `printer.py` / `mock_printer.py` / `cups.py` — printer adapters
-- `protocol.py` — message schema (adaptable to Express backend)
-- `websocket_client.py` — reconnect and heartbeat
-- `health.py` — lightweight health snapshot
+| Situation | Behavior |
+|-----------|----------|
+| `COMPLETED` / `FAILED` / `CANCELLED` | Re-assign → ack only, **no** re-print |
+| `SUBMITTED` / `PRINTING` | Monitor persisted `cups_job_id` only |
+| CUPS state unknown | `FAILED` (backend reconciliation), **no** auto re-`lp` |
+| `cups_job_id` set | Never run download/submit pipeline again |
 
-## Job lifecycle
+## Retry policy
 
-States: `RECEIVED` → `DOWNLOADING` → `READY` → `SUBMITTED` → `PRINTING` → `COMPLETED`
-
-Failure can move to `FAILED` from any non-terminal execution state. `CANCELLED` is supported for cancel flows.
-
-Downloading a file alone does **not** complete a job. Completion requires successful printer execution (or mock simulation).
-
-## Duplicate-print protection (critical)
-
-The worst failure mode is printing the same paid job twice after a network outage or reboot.
-
-**Rules:**
-
-1. **`backend_job_id` is the idempotency key** (unique in SQLite).
-2. **Persist state before irreversible steps** — especially `SUBMITTED` with `cups_job_id` recorded after `lp`/mock submit, before treating the job as printing.
-3. **On duplicate `job.assigned`:**
-   - `COMPLETED` / `CANCELLED` / `FAILED` → notify backend only; **never** print again.
-4. **On restart (`recover_unfinished_jobs`):**
-   - `RECEIVED` / `DOWNLOADING` — resume download pipeline.
-   - `READY` — submit only if the local file exists; otherwise `FAILED` (reconciliation).
-   - `SUBMITTED` / `PRINTING` — **do not re-submit**; poll CUPS/mock using stored `cups_job_id`.
-   - If printer state is **unknown** (e.g. CUPS job lost after reboot, mock state empty) → `FAILED` with a message requiring **backend reconciliation**; **no** automatic re-print.
-
-| Situation | Action |
-|-----------|--------|
-| Job already `COMPLETED` | Ack only |
-| Job `SUBMITTED`/`PRINTING`, printer state known | Resume monitoring |
-| Job `SUBMITTED`/`PRINTING`, printer state unknown | `FAILED`, manual/backend reconciliation |
-| New `backend_job_id` | Normal pipeline |
-
-## Mock mode
-
-`PRINTER_MODE=mock` uses `MockPrinter` — no CUPS or hardware. Configure delay and failure simulation via `MOCK_PRINT_*` variables.
-
-## CUPS (later)
-
-`PRINTER_MODE=cups` uses CLI tools (`lp`, `lpstat`, `cancel`). Requires a configured queue on Raspberry Pi OS. Not validated in CI until hardware is available.
+Retryable download (and transient printer unavailable **before** submit) failures use `RETRY_WAITING` with exponential backoff. Permanent errors (4xx, invalid settings, post-submit ambiguity) go to `FAILED`. Retries never run after a `cups_job_id` exists.
 
 ## Raspberry Pi deployment
 
-1. Copy or clone the project to `/opt/quickprint-pi-agent`.
-2. Run `scripts/install.sh` (creates `quickprint` user, venv, directories, systemd unit).
-3. Edit `/opt/quickprint-pi-agent/.env` for production values.
-4. `sudo systemctl enable --now quickprint-agent`
-5. Logs: `journalctl -u quickprint-agent -f`
+### CUPS (on the Pi only)
 
-Update with `scripts/update.sh` (preserves `.env` and `data/agent.db`).
+```bash
+sudo apt install cups cups-client
+sudo systemctl enable --now cups
+lpstat -p -d
+lpstat -r
+lpinfo -v
+```
 
-## Backend integration (to agree with Express team)
+Configure a queue in CUPS (outside this app — do not modify `/etc/cups` from the agent). Set `PRINTER_MODE=cups` and `CUPS_PRINTER_NAME` to the queue name.
 
-- WebSocket URL, TLS, and optional client certificates
-- Authentication header format (placeholder: `Authorization: Bearer {agent_id}:{agent_secret}`)
-- Final JSON schema for `job.assigned` and outbound status events
-- Whether the backend resends the same `job_id` after the Pi was offline
-- Cancel and retry semantics (`job.cancel`, new assignment vs replay)
+If no printer is configured, the agent reports printer unavailable and does not crash.
 
-## Security
+### Install
 
-- Do not log `agent_secret`, authorization headers, or signed URL query strings (URLs are redacted in logs).
-- Sanitize filenames and reject path traversal.
-- Run the service as a dedicated non-root user (`quickprint`).
+```bash
+# Copy repo to /opt/quickprint-pi-agent, then:
+sudo scripts/install.sh
+sudo nano /opt/quickprint-pi-agent/.env
+sudo systemctl enable --now quickprint-agent
+sudo journalctl -u quickprint-agent -f
+```
+
+Update: `scripts/update.sh`  
+Remove service: `scripts/uninstall.sh` (preserves data)
+
+## Logs
+
+Structured logs to stderr / journald. Secrets, tokens, and signed URL query strings are not logged.
+
+## Backend integration (TBD with Express)
+
+- WebSocket URL, TLS, auth header format
+- Final `job.assigned` / status JSON schema
+- Resend vs new assignment after offline Pi
+
+## Tests
+
+```bash
+pytest -q
+```
+
+Includes CUPS unit tests with `FakeCupsRunner` (no real `lp`). Optional `tests/test_cups_integration.py` is skipped on Mac.
 
 ## License
 
-Internal QuickPrint project component.
+Internal QuickPrint component.

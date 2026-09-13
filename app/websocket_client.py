@@ -36,9 +36,15 @@ class ConnectionState(str, Enum):
 
 
 class WebSocketClient:
-    def __init__(self, settings: Settings, job_manager: JobManager) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        job_manager: JobManager,
+        health_provider: object | None = None,
+    ) -> None:
         self._settings = settings
         self._job_manager = job_manager
+        self._health_provider = health_provider
         job_manager.set_state_change_callback(self.send_status)
         self._state = ConnectionState.DISCONNECTED
         self._ws: ClientConnection | None = None
@@ -142,6 +148,7 @@ class WebSocketClient:
                         await self._heartbeat_task
                 self._ws = None
                 self._state = ConnectionState.DISCONNECTED
+                log.info("WebSocket disconnected")
 
     async def _heartbeat_loop(self) -> None:
         interval = self._settings.heartbeat_interval_seconds
@@ -149,8 +156,15 @@ class WebSocketClient:
             await asyncio.sleep(interval)
             if self._ws and self._state == ConnectionState.CONNECTED:
                 try:
+                    health_data = None
+                    if self._health_provider is not None:
+                        snap = getattr(self._health_provider, "last_health", None)
+                        if snap is not None and hasattr(snap, "to_dict"):
+                            health_data = snap.to_dict()
                     await self._ws.send(
-                        build_heartbeat(self._settings.agent_id or "dev")
+                        build_heartbeat(
+                            self._settings.agent_id or "dev", health=health_data
+                        )
                     )
                 except Exception:
                     log.warning("Heartbeat send failed")

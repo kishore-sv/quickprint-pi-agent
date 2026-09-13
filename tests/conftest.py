@@ -77,6 +77,7 @@ def make_job_manager(
         processing_dir=dirs["processing"],
         completed_dir=dirs["completed"],
         failed_dir=dirs["failed"],
+        incoming_dir=dirs["incoming"],
         poll_interval_seconds=0.01,
     )
     jm.start()

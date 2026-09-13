@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import PrintSettings
+from app.cups_job_identity import cups_job_title
 from app.printer import (
+    ExistingJobLookup,
+    ExistingJobLookupStatus,
     Printer,
     PrinterError,
     PrinterJobState,
     PrinterJobStatus,
+    PrinterSubmissionError,
+    PrinterUnavailableError,
     SubmitResult,
 )
 
@@ -33,11 +37,47 @@ class MockPrinter(Printer):
         self,
         delay_seconds: float = 0.1,
         simulate_failure: bool = False,
+        simulate_unavailable: bool = False,
+        simulate_submit_failure: bool = False,
     ) -> None:
         self._delay_seconds = delay_seconds
         self._simulate_failure = simulate_failure
+        self._simulate_unavailable = simulate_unavailable
+        self._simulate_submit_failure = simulate_submit_failure
         self._jobs: dict[str, _MockJob] = {}
         self.submit_count = 0
+
+    async def get_printer_info(self) -> dict[str, str | bool]:
+        return {
+            "name": "mock",
+            "available": not self._simulate_unavailable,
+            "mode": "mock",
+        }
+
+    async def find_existing_job(self, backend_job_id: str) -> ExistingJobLookup:
+        try:
+            cups_job_title(backend_job_id)
+        except ValueError as e:
+            return ExistingJobLookup(
+                status=ExistingJobLookupStatus.LOOKUP_FAILED,
+                message=str(e),
+            )
+        matches = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.backend_job_id == backend_job_id
+        ]
+        if not matches:
+            return ExistingJobLookup(status=ExistingJobLookupStatus.NOT_FOUND)
+        if len(matches) > 1:
+            return ExistingJobLookup(
+                status=ExistingJobLookupStatus.AMBIGUOUS,
+                message="Multiple mock jobs for backend_job_id",
+            )
+        return ExistingJobLookup(
+            status=ExistingJobLookupStatus.FOUND,
+            printer_job_id=matches[0],
+        )
 
     async def submit(
         self,
@@ -45,6 +85,10 @@ class MockPrinter(Printer):
         backend_job_id: str,
         settings: PrintSettings,
     ) -> SubmitResult:
+        if self._simulate_unavailable:
+            raise PrinterUnavailableError("Mock printer unavailable")
+        if self._simulate_submit_failure:
+            raise PrinterSubmissionError("Mock submit failure")
         if not file_path.is_file():
             raise PrinterError(f"File not found: {file_path}")
         self.submit_count += 1
@@ -99,4 +143,4 @@ class MockPrinter(Printer):
             job.cancelled = True
 
     async def health_check(self) -> bool:
-        return True
+        return not self._simulate_unavailable

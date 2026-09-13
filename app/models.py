@@ -29,7 +29,9 @@ ALLOWED_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.RECEIVED: frozenset(
         {JobStatus.DOWNLOADING, JobStatus.FAILED, JobStatus.CANCELLED}
     ),
-    JobStatus.DOWNLOADING: frozenset({JobStatus.READY, JobStatus.FAILED}),
+    JobStatus.DOWNLOADING: frozenset(
+        {JobStatus.READY, JobStatus.FAILED, JobStatus.RETRY_WAITING}
+    ),
     JobStatus.READY: frozenset({JobStatus.SUBMITTED, JobStatus.FAILED}),
     JobStatus.SUBMITTED: frozenset(
         {JobStatus.PRINTING, JobStatus.COMPLETED, JobStatus.FAILED}
@@ -101,6 +103,9 @@ class AssignedJob:
 
     @classmethod
     def from_protocol_payload(cls, payload: dict[str, Any]) -> AssignedJob:
+        from app.protocol import validate_job_assigned_payload
+
+        validate_job_assigned_payload(payload)
         job_id = payload.get("job_id")
         if not job_id or not isinstance(job_id, str):
             raise ValueError("job.assigned requires string job_id")
