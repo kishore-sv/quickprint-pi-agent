@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from enum import Enum
+from typing import Any
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -12,6 +13,7 @@ from websockets.asyncio.client import ClientConnection
 from app.config import Settings
 from app.job_manager import JobManager
 from app.logger import get_logger
+from app.models import JobStatus, utc_now_iso
 from app.protocol import (
     InboundType,
     ProtocolError,
@@ -21,7 +23,6 @@ from app.protocol import (
     parse_message,
     status_message_for_job_status,
 )
-from app.models import JobStatus
 
 log = get_logger("websocket_client")
 
@@ -51,21 +52,63 @@ class WebSocketClient:
         self._task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._pending_statuses: dict[str, tuple[JobStatus, dict[str, Any]]] = {}
 
     @property
     def state(self) -> ConnectionState:
         return self._state
 
+    def _build_status_message(
+        self,
+        backend_job_id: str,
+        status: JobStatus,
+        extra: dict[str, Any] | None = None,
+    ) -> str:
+        fields = dict(extra or {})
+        cups_job_id = fields.pop("cups_job_id", None)
+        if cups_job_id is not None and not isinstance(cups_job_id, str):
+            cups_job_id = None
+        agent_id = self._settings.agent_id or None
+        return status_message_for_job_status(
+            status.value,
+            backend_job_id,
+            agent_id=agent_id,
+            timestamp=utc_now_iso(),
+            cups_job_id=cups_job_id,
+            **fields,
+        )
+
     async def send_status(
-        self, backend_job_id: str, status: JobStatus, **extra: object
+        self,
+        backend_job_id: str,
+        status: JobStatus,
+        extra: dict[str, Any] | None = None,
     ) -> None:
+        payload = dict(extra or {})
         if self._ws is None or self._state != ConnectionState.CONNECTED:
+            self._pending_statuses[backend_job_id] = (status, payload)
             return
-        msg = status_message_for_job_status(status.value, backend_job_id, **extra)
+        msg = self._build_status_message(backend_job_id, status, payload)
         try:
             await self._ws.send(msg)
         except Exception:
             log.warning("Failed to send status for job=%s", backend_job_id)
+            self._pending_statuses[backend_job_id] = (status, payload)
+
+    async def _flush_pending_statuses(self) -> None:
+        if not self._pending_statuses or self._ws is None:
+            return
+        pending = list(self._pending_statuses.items())
+        self._pending_statuses.clear()
+        for backend_job_id, (status, extra) in pending:
+            msg = self._build_status_message(backend_job_id, status, extra)
+            try:
+                await self._ws.send(msg)
+            except Exception:
+                log.warning(
+                    "Failed to flush pending status for job=%s", backend_job_id
+                )
+                self._pending_statuses[backend_job_id] = (status, extra)
 
     def start(self) -> None:
         if not self._settings.backend_ws_url:
@@ -135,6 +178,8 @@ class WebSocketClient:
             self._ws = ws
             self._state = ConnectionState.CONNECTED
             log.info("WebSocket connected")
+            await self._job_manager.reconcile_backend_status()
+            await self._flush_pending_statuses()
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             try:
                 async for raw in ws:

@@ -118,6 +118,13 @@ class JobManager:
                 continue
             await self._resume_job(assigned, record)
 
+    async def reconcile_backend_status(self) -> None:
+        """Re-report current status for in-flight jobs after WebSocket reconnect."""
+        jobs = self._db.list_non_terminal_jobs()
+        log.info("Reconciling backend status for %d job(s)", len(jobs))
+        for record in jobs:
+            await self._emit(record.backend_job_id, record.status)
+
     async def _worker_loop(self) -> None:
         while not self._shutdown:
             job = await self._queue.get()
@@ -502,7 +509,10 @@ class JobManager:
     ) -> None:
         log.info("Job state job=%s status=%s", backend_job_id, status.value)
         if self._on_state_change:
-            payload = extra or {}
+            payload = dict(extra or {})
+            rec = self._db.get_by_backend_id(backend_job_id)
+            if rec and rec.cups_job_id and "cups_job_id" not in payload:
+                payload["cups_job_id"] = rec.cups_job_id
             await self._on_state_change(backend_job_id, status, payload)
 
     def _move_to_processing(self, path: Path, backend_job_id: str) -> Path:

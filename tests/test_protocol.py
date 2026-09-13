@@ -56,3 +56,28 @@ def test_outbound_builders():
 
     hb = build_outbound(OutboundType.AGENT_HEARTBEAT, agent_id="a1")
     assert json.loads(hb)["agent_id"] == "a1"
+
+
+def test_status_message_enriched_fields():
+    msg = status_message_for_job_status(
+        "SUBMITTED",
+        "j1",
+        agent_id="agent-uuid",
+        timestamp="2026-01-01T00:00:00Z",
+        cups_job_id="mock-abc",
+    )
+    data = json.loads(msg)
+    assert data["type"] == OutboundType.JOB_SUBMITTED.value
+    assert data["job_id"] == "j1"
+    assert data["agent_id"] == "agent-uuid"
+    assert data["timestamp"] == "2026-01-01T00:00:00Z"
+    assert data["cups_job_id"] == "mock-abc"
+
+
+def test_status_message_includes_error():
+    msg = status_message_for_job_status(
+        "FAILED", "j1", error="download failed"
+    )
+    data = json.loads(msg)
+    assert data["type"] == OutboundType.JOB_FAILED.value
+    assert data["error"] == "download failed"

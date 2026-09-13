@@ -105,7 +105,15 @@ def build_outbound(msg_type: OutboundType, **fields: Any) -> str:
     return json.dumps(body)
 
 
-def status_message_for_job_status(status: str, job_id: str, **extra: Any) -> str:
+def status_message_for_job_status(
+    status: str,
+    job_id: str,
+    *,
+    agent_id: str | None = None,
+    timestamp: str | None = None,
+    cups_job_id: str | None = None,
+    **extra: Any,
+) -> str:
     mapping = {
         "RECEIVED": OutboundType.JOB_RECEIVED,
         "DOWNLOADING": OutboundType.JOB_DOWNLOADING,
@@ -117,10 +125,18 @@ def status_message_for_job_status(status: str, job_id: str, **extra: Any) -> str
         "CANCELLED": OutboundType.JOB_FAILED,
         "RETRY_WAITING": OutboundType.JOB_FAILED,
     }
+    fields: dict[str, Any] = {"job_id": job_id}
+    if agent_id:
+        fields["agent_id"] = agent_id
+    if timestamp:
+        fields["timestamp"] = timestamp
+    if cups_job_id:
+        fields["cups_job_id"] = cups_job_id
+    fields.update(extra)
     outbound = mapping.get(status)
     if outbound is None:
-        return build_outbound(OutboundType.JOB_RECEIVED, job_id=job_id, **extra)
-    return build_outbound(outbound, job_id=job_id, **extra)
+        return build_outbound(OutboundType.JOB_RECEIVED, **fields)
+    return build_outbound(outbound, **fields)
 
 
 def build_heartbeat(agent_id: str, health: dict[str, Any] | None = None) -> str:
