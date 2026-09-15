@@ -27,6 +27,10 @@ class FakeCupsRunner:
             return CommandResult(1, "", "Unknown printer")
         if args[:2] == ["lpstat", "-r"]:
             return CommandResult(0, "scheduler is running", "")
+        if args[:2] == ["lpstat", "-o"] and len(args) == 3:
+            return CommandResult(0, "", "")
+        if args[:3] == ["lpstat", "-W", "completed"] and len(args) == 5:
+            return CommandResult(0, "", "")
         if args[:2] == ["lpstat", "-o"]:
             return CommandResult(1, "", "Unable to locate printer")
         if args[:3] == ["lpstat", "-W", "completed"]:

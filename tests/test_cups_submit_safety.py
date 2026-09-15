@@ -42,11 +42,11 @@ async def test_lp_timeout_adopts_existing_job(tmp_path: Path):
         key = tuple(args)
         if key in runner.responses:
             return runner.responses[key]
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(0, f"PiPrinter-77 user 1024\n", "")
         if args == ["lpstat", "-l", "-o", "PiPrinter-77"]:
             return CommandResult(0, f"Title: {title}\n", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(1, "", "")
         return CommandResult(1, "", "missing")
 
@@ -68,9 +68,9 @@ async def test_lp_timeout_not_found_raises_uncertain(tmp_path: Path):
         if args and args[0] == "lp":
             runner.lp_call_count += 1
             raise CupsCommandTimeoutError("lp timed out")
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(0, "", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(0, "", "")
         key = tuple(args)
         return runner.responses.get(key, CommandResult(1, "", ""))
@@ -94,7 +94,7 @@ async def test_lp_timeout_ambiguous_raises_uncertain(tmp_path: Path):
         if args and args[0] == "lp":
             runner.lp_call_count += 1
             raise CupsCommandTimeoutError("lp timed out")
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(
                 0, "PiPrinter-1 user\nPiPrinter-2 user\n", ""
             )
@@ -102,7 +102,7 @@ async def test_lp_timeout_ambiguous_raises_uncertain(tmp_path: Path):
             return CommandResult(0, f"Title: {title}\n", "")
         if args == ["lpstat", "-l", "-o", "PiPrinter-2"]:
             return CommandResult(0, f"Title: {title}\n", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(1, "", "")
         key = tuple(args)
         return runner.responses.get(key, CommandResult(1, "", ""))
@@ -124,7 +124,13 @@ async def test_lp_timeout_lookup_failed_raises_uncertain(tmp_path: Path):
         if args and args[0] == "lp":
             runner.lp_call_count += 1
             raise CupsCommandTimeoutError("lp timed out")
-        if args[:2] == ["lpstat", "-o"] or args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-o", "PiPrinter"] or args == [
+            "lpstat",
+            "-W",
+            "completed",
+            "-o",
+            "PiPrinter",
+        ]:
             return CommandResult(1, "", "lpstat failed")
         key = tuple(args)
         return runner.responses.get(key, CommandResult(1, "", ""))
@@ -150,7 +156,7 @@ async def test_exact_title_no_prefix_collision():
     printer = CupsPrinter("PiPrinter", runner=runner)
 
     async def flex(args, timeout):
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(
                 0,
                 "PiPrinter-1 user\nPiPrinter-2 user\n",
@@ -160,7 +166,7 @@ async def test_exact_title_no_prefix_collision():
             return CommandResult(0, "Title: QuickPrint:abc123-other\n", "")
         if args == ["lpstat", "-l", "-o", "PiPrinter-2"]:
             return CommandResult(0, "Title: QuickPrint:abc123\n", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(1, "", "")
         key = tuple(args)
         return runner.responses.get(key, CommandResult(1, "", ""))
@@ -184,9 +190,9 @@ async def test_timeout_not_found_fails_job_in_manager(tmp_job_dirs, tmp_path):
         if args and args[0] == "lp":
             runner.lp_call_count += 1
             raise CupsCommandTimeoutError("lp timed out")
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(0, "", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(0, "", "")
         key = tuple(args)
         return runner.responses.get(key, CommandResult(1, "", ""))

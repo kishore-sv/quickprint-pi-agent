@@ -86,9 +86,9 @@ async def test_cups_accepted_persisted_id_restart_monitored(tmp_path, tmp_job_di
         key = tuple(args)
         if key in runner.responses:
             return runner.responses[key]
-        if args[:2] == ["lpstat", "-o"] and len(args) == 2:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(0, "PiPrinter-10 user processing", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(1, "", "")
         return CommandResult(1, "", "missing")
 
@@ -117,8 +117,8 @@ async def test_cups_accepted_persisted_id_restart_monitored(tmp_path, tmp_job_di
 
     async def complete_later():
         await asyncio.sleep(0.05)
-        runner.responses[("lpstat", "-o", "PiPrinter-10")] = CommandResult(1, "", "")
-        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter-10")] = (
+        runner.responses[("lpstat", "-o", "PiPrinter")] = CommandResult(0, "", "")
+        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter")] = (
             CommandResult(0, "PiPrinter-10 completed", "")
         )
 
@@ -166,14 +166,12 @@ async def test_ready_adopts_existing_cups_job_by_title(tmp_path, tmp_job_dirs):
         key = tuple(args)
         if key in runner.responses:
             return runner.responses[key]
-        if args == ["lpstat", "-o"]:
+        if args == ["lpstat", "-o", "PiPrinter"]:
             return CommandResult(0, f"PiPrinter-55 user 1024 {title}", "")
         if args == ["lpstat", "-l", "-o", "PiPrinter-55"]:
             return CommandResult(0, f"Title: {title}", "")
-        if args[:3] == ["lpstat", "-W", "completed"]:
+        if args == ["lpstat", "-W", "completed", "-o", "PiPrinter"]:
             return CommandResult(1, "", "")
-        if args[:2] == ["lpstat", "-o"] and len(args) == 3:
-            return CommandResult(0, "PiPrinter-55 user processing", "")
         return CommandResult(1, "", "missing")
 
     runner.run = flex  # type: ignore[method-assign]
@@ -203,8 +201,8 @@ async def test_ready_adopts_existing_cups_job_by_title(tmp_path, tmp_job_dirs):
 
     async def complete_later():
         await asyncio.sleep(0.08)
-        runner.responses[("lpstat", "-o", "PiPrinter-55")] = CommandResult(1, "", "")
-        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter-55")] = (
+        runner.responses[("lpstat", "-o", "PiPrinter")] = CommandResult(0, "", "")
+        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter")] = (
             CommandResult(0, "PiPrinter-55 completed", "")
         )
 

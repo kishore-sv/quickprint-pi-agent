@@ -77,24 +77,70 @@ async def test_lp_failure(tmp_path: Path):
 async def test_job_status_pending_processing_completed():
     runner = FakeCupsRunner()
     printer = CupsPrinter("P", runner=runner)
-    runner.responses[("lpstat", "-o", "P-1")] = CommandResult(
+    runner.responses[("lpstat", "-o", "P")] = CommandResult(
         0, "P-1 user  pending", ""
     )
     st = await printer.get_status("P-1")
     assert st.state == PrinterJobState.PENDING
 
-    runner.responses[("lpstat", "-o", "P-1")] = CommandResult(
+    runner.responses[("lpstat", "-o", "P")] = CommandResult(
         0, "P-1 user  processing", ""
     )
     st = await printer.get_status("P-1")
     assert st.state == PrinterJobState.PRINTING
 
-    runner.responses[("lpstat", "-o", "P-1")] = CommandResult(1, "", "gone")
-    runner.responses[("lpstat", "-W", "completed", "-o", "P-1")] = CommandResult(
+    runner.responses[("lpstat", "-o", "P")] = CommandResult(0, "", "")
+    runner.responses[("lpstat", "-W", "completed", "-o", "P")] = CommandResult(
         0, "P-1 user  completed", ""
     )
     st = await printer.get_status("P-1")
     assert st.state == PrinterJobState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_get_status_never_passes_job_id_as_lpstat_destination():
+    runner = FakeCupsRunner()
+    printer = CupsPrinter("quickprint-test", runner=runner)
+    runner.responses[("lpstat", "-o", "quickprint-test")] = CommandResult(
+        0, "quickprint-test-1 user  processing", ""
+    )
+
+    await printer.get_status("quickprint-test-1")
+
+    for call in runner.calls:
+        assert call != ["lpstat", "-o", "quickprint-test-1"]
+        assert call != ["lpstat", "-W", "completed", "-o", "quickprint-test-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_status_completed_job_only_in_completed_queue():
+    runner = FakeCupsRunner()
+    printer = CupsPrinter("quickprint-test", runner=runner)
+    runner.responses[("lpstat", "-o", "quickprint-test")] = CommandResult(0, "", "")
+    runner.responses[("lpstat", "-W", "completed", "-o", "quickprint-test")] = (
+        CommandResult(0, "quickprint-test-1 user  completed", "")
+    )
+
+    st = await printer.get_status("quickprint-test-1")
+    assert st.state == PrinterJobState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_get_status_cancelled_and_failed_from_queue_listing():
+    runner = FakeCupsRunner()
+    printer = CupsPrinter("OfficeQ", runner=runner)
+
+    runner.responses[("lpstat", "-o", "OfficeQ")] = CommandResult(
+        0, "OfficeQ-3 user  canceled", ""
+    )
+    st = await printer.get_status("OfficeQ-3")
+    assert st.state == PrinterJobState.CANCELLED
+
+    runner.responses[("lpstat", "-o", "OfficeQ")] = CommandResult(
+        0, "OfficeQ-4 user  aborted", ""
+    )
+    st = await printer.get_status("OfficeQ-4")
+    assert st.state == PrinterJobState.FAILED
 
 
 @pytest.mark.asyncio

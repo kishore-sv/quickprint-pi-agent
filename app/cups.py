@@ -61,6 +61,26 @@ def _job_ids_from_lpstat_listing(stdout: str) -> list[str]:
     return ids
 
 
+def _job_line_from_lpstat_listing(stdout: str, job_id: str) -> str | None:
+    """Return the lpstat listing line for a CUPS job id, if present."""
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == job_id or stripped.startswith(f"{job_id} "):
+            return stripped
+    return None
+
+
+def _lpstat_queue_list_args(printer_name: str, *, which: str = "not-completed") -> list[str]:
+    """Build lpstat argv to list jobs on a printer queue (never a job id)."""
+    if which == "completed":
+        return ["lpstat", "-W", "completed", "-o", printer_name]
+    if which == "all":
+        return ["lpstat", "-W", "all", "-o", printer_name]
+    return ["lpstat", "-o", printer_name]
+
+
 def _build_runner_env(cups_server: str | None) -> AsyncSubprocessCupsRunner:
     extra: dict[str, str] = {}
     if cups_server:
@@ -137,7 +157,10 @@ class CupsPrinter(Printer):
         matches: set[str] = set()
         listings_failed = 0
 
-        for list_args in (["lpstat", "-o"], ["lpstat", "-W", "completed", "-o"]):
+        for list_args in (
+            _lpstat_queue_list_args(self._printer_name),
+            _lpstat_queue_list_args(self._printer_name, which="completed"),
+        ):
             try:
                 result = await self._run(*list_args)
             except CupsCommandTimeoutError as e:
@@ -264,43 +287,44 @@ class CupsPrinter(Printer):
         return SubmitResult(printer_job_id=cups_job_id)
 
     async def get_status(self, printer_job_id: str) -> PrinterJobStatus:
-        try:
-            result = await self._run("lpstat", "-o", printer_job_id)
-        except CupsCommandTimeoutError as e:
-            return PrinterJobStatus(
-                printer_job_id=printer_job_id,
-                state=PrinterJobState.UNKNOWN,
-                message=str(e),
-            )
+        last_err = ""
+        listings = (
+            _lpstat_queue_list_args(self._printer_name),
+            _lpstat_queue_list_args(self._printer_name, which="completed"),
+        )
 
-        if result.returncode == 0:
-            state = _parse_job_state(result.stdout, result.stderr)
+        for list_args in listings:
+            try:
+                result = await self._run(*list_args)
+            except CupsCommandTimeoutError as e:
+                return PrinterJobStatus(
+                    printer_job_id=printer_job_id,
+                    state=PrinterJobState.UNKNOWN,
+                    message=str(e),
+                )
+
+            if result.returncode != 0:
+                last_err = result.stderr.strip() or result.stdout.strip()
+                continue
+
+            line = _job_line_from_lpstat_listing(result.stdout, printer_job_id)
+            if not line:
+                continue
+
+            state = _parse_job_state(line, result.stderr)
             log.debug(
                 "CUPS status %s",
                 job_context(cups_job_id=printer_job_id, status=state.value),
             )
             return PrinterJobStatus(printer_job_id=printer_job_id, state=state)
 
-        completed = await self._run(
-            "lpstat", "-W", "completed", "-o", printer_job_id
-        )
-        if completed.returncode == 0 and printer_job_id in completed.stdout:
-            return PrinterJobStatus(
-                printer_job_id=printer_job_id,
-                state=PrinterJobState.COMPLETED,
-            )
-
-        err = result.stderr.strip() or result.stdout.strip()
-        if "Unable to locate" in err or "No such file" in err:
-            return PrinterJobStatus(
-                printer_job_id=printer_job_id,
-                state=PrinterJobState.UNKNOWN,
-                message=err,
-            )
         return PrinterJobStatus(
             printer_job_id=printer_job_id,
             state=PrinterJobState.UNKNOWN,
-            message=err or "Could not determine CUPS job state",
+            message=(
+                last_err
+                or f"CUPS job {printer_job_id!r} not found on queue {self._printer_name!r}"
+            ),
         )
 
     async def cancel(self, printer_job_id: str) -> None:

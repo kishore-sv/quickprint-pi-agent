@@ -92,3 +92,55 @@ journalctl -u quickprint-agent -f
 ```
 
 That's it. **Once `active (running)` + WebSocket connected appears, the Pi agent is running automatically on boot.**
+
+
+---
+
+
+# step-6 correction
+
+Yes, this means **step 6 failed**. The script tried to create a file-based raw CUPS queue, but your current CUPS has file devices disabled.
+
+Let's fix it quickly.
+
+### 1. Enable CUPS file devices
+
+Run:
+
+```bash
+sudo nano /etc/cups/cups-files.conf
+```
+
+Find/add:
+
+```text
+FileDevice Yes
+```
+
+Save: `Ctrl+O`, Enter, then `Ctrl+X`.
+
+### 2. Restart CUPS
+
+```bash
+sudo systemctl restart cups
+```
+
+### 3. Run the test printer script again
+
+```bash
+cd /opt/quickprint-pi-agent
+sudo scripts/setup-cups-test-printer.sh
+```
+
+Then:
+
+```bash
+lpstat -p
+```
+
+You should now see:
+
+```text
+printer quickprint-test ...
+```
+

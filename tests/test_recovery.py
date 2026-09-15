@@ -109,7 +109,7 @@ async def test_recovery_printing_cups_no_resubmit(tmp_path, tmp_job_dirs):
         0, "printer PiPrinter is idle", ""
     )
     runner.responses[("lpstat", "-r")] = CommandResult(0, "scheduler is running", "")
-    runner.responses[("lpstat", "-o", "PiPrinter-7")] = CommandResult(
+    runner.responses[("lpstat", "-o", "PiPrinter")] = CommandResult(
         0, "PiPrinter-7 user processing", ""
     )
 
@@ -153,8 +153,8 @@ async def test_recovery_printing_cups_no_resubmit(tmp_path, tmp_job_dirs):
 
     async def complete_later():
         await asyncio.sleep(0.05)
-        runner.responses[("lpstat", "-o", "PiPrinter-7")] = CommandResult(1, "", "")
-        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter-7")] = (
+        runner.responses[("lpstat", "-o", "PiPrinter")] = CommandResult(0, "", "")
+        runner.responses[("lpstat", "-W", "completed", "-o", "PiPrinter")] = (
             CommandResult(0, "PiPrinter-7 completed", "")
         )
 
