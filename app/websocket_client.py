@@ -88,12 +88,27 @@ class WebSocketClient:
         payload = dict(extra or {})
         if self._ws is None or self._state != ConnectionState.CONNECTED:
             self._pending_statuses[backend_job_id] = (status, payload)
+            log.info(
+                "Queued status for job=%s status=%s (ws %s)",
+                backend_job_id,
+                status.value,
+                self._state.value,
+            )
             return
         msg = self._build_status_message(backend_job_id, status, payload)
         try:
             await self._ws.send(msg)
+            log.info(
+                "Sent status for job=%s status=%s",
+                backend_job_id,
+                status.value,
+            )
         except Exception:
-            log.warning("Failed to send status for job=%s", backend_job_id)
+            log.warning(
+                "Failed to send status for job=%s status=%s",
+                backend_job_id,
+                status.value,
+            )
             self._pending_statuses[backend_job_id] = (status, payload)
 
     async def _flush_pending_statuses(self) -> None:

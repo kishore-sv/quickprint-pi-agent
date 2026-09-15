@@ -134,9 +134,22 @@ class JobManager:
             await self._resume_job(assigned, record)
 
     async def reconcile_backend_status(self) -> None:
-        """Re-report current status for in-flight jobs after WebSocket reconnect."""
-        jobs = self._db.list_non_terminal_jobs()
-        log.info("Reconciling backend status for %d job(s)", len(jobs))
+        """Re-report current status for in-flight and recently finished jobs after reconnect."""
+        active = self._db.list_non_terminal_jobs()
+        recent_terminal = self._db.list_recently_terminal_jobs(within_seconds=300)
+        seen: set[str] = set()
+        jobs = []
+        for record in active + recent_terminal:
+            if record.backend_job_id in seen:
+                continue
+            seen.add(record.backend_job_id)
+            jobs.append(record)
+        log.info(
+            "Reconciling backend status for %d job(s) (%d active, %d recent terminal)",
+            len(jobs),
+            len(active),
+            len(recent_terminal),
+        )
         for record in jobs:
             await self._emit(record.backend_job_id, record.status)
 

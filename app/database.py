@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +171,28 @@ class Database:
             rows = self._conn.execute(
                 f"SELECT * FROM jobs WHERE status IN ({','.join('?' * len(active))})",
                 active,
+            ).fetchall()
+        return [_row_to_record(r) for r in rows]
+
+    def list_recently_terminal_jobs(self, within_seconds: int = 300) -> list[JobRecord]:
+        """Terminal jobs updated recently — re-reported on WS reconnect if backend missed an event."""
+        terminal = [
+            JobStatus.COMPLETED.value,
+            JobStatus.FAILED.value,
+            JobStatus.CANCELLED.value,
+        ]
+        cutoff = (
+            datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=within_seconds)
+        ).isoformat().replace("+00:00", "Z")
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM jobs
+                WHERE status IN ({','.join('?' * len(terminal))})
+                  AND updated_at >= ?
+                ORDER BY updated_at DESC
+                """,
+                (*terminal, cutoff),
             ).fetchall()
         return [_row_to_record(r) for r in rows]
 
