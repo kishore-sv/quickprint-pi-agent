@@ -35,10 +35,12 @@ DISPLAY_TOKEN=<from seed output>
 Development (LAN):
 
 ```bash
-API_URL=http://127.0.0.1:8000
-DISPLAY_URL=http://localhost:3000/kiosk/KIOSK-001
+API_URL=http://10.231.209.222:8000
+DISPLAY_URL=http://10.231.209.222:3000/kiosk/KIOSK-001
 DISPLAY_TOKEN=<from seed output>
 ```
+
+On the backend, `FRONTEND_URL` and `CORS_ORIGINS` must include the same origin as `DISPLAY_URL` (e.g. `http://10.231.209.222:3000`) so the pairing redirect is allowed.
 
 **Never** put `AGENT_SECRET` or `DISPLAY_TOKEN` in `DISPLAY_URL`, query parameters, or browser-visible config. The display token is used only by the local bootstrap server to establish an httpOnly session cookie.
 
@@ -82,7 +84,7 @@ DISPLAY_TOKEN=<token> \
 ./scripts/kiosk-display-boot.sh
 ```
 
-Chromium opens `http://127.0.0.1:18765/`, which pairs server-side and redirects to the clean display URL.
+Chromium opens `http://127.0.0.1:18765/`, which auto-submits a top-level form POST to the backend `display-session` endpoint, sets the HttpOnly cookie, and redirects to the clean display URL.
 
 ## Packages installed
 
@@ -118,7 +120,7 @@ This is stable across agent restarts, Pi reboots, and printer changes.
 | Issue | Fix |
 |-------|-----|
 | Blank screen | Check `DISPLAY_URL` and network; `journalctl -u quickprint-display.service` |
-| "Display pairing failed" | Verify `API_URL`, `DISPLAY_TOKEN`, and `KIOSK_CODE` in `.env.display` |
+| "Display pairing failed" | Verify `API_URL`, `DISPLAY_TOKEN`, and `KIOSK_CODE` in `.env.display`; ensure backend `CORS_ORIGINS` includes your `DISPLAY_URL` origin |
 | "Display not paired" on screen | Restart display service to re-run bootstrap pairing |
 | Stuck on old job | Display reconciles on reconnect; restart Chromium: `sudo systemctl restart quickprint-display.service` |
 | Screen sleeps | Re-run setup script; verify `xset` in openbox autostart |
