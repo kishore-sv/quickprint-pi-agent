@@ -51,7 +51,7 @@ async def test_no_duplicate_print_after_completion(
 
 
 @pytest.mark.asyncio
-async def test_submitted_without_printer_state_fails_safe(tmp_path, tmp_job_dirs):
+async def test_submitted_unknown_keeps_polling_without_resubmit(tmp_path, tmp_job_dirs):
     db_path = tmp_path / "agent.db"
     db = init_db(db_path)
 
@@ -81,16 +81,15 @@ async def test_submitted_without_printer_state_fails_safe(tmp_path, tmp_job_dirs
         poll_interval_seconds=0.01,
     )
     jm2.start()
-    await jm2.recover_unfinished_jobs()
-    for _ in range(50):
-        rec = db.get_by_backend_id("job-mid")
-        if rec and rec.status == JobStatus.FAILED:
-            break
-        await asyncio.sleep(0.05)
+    recover_task = asyncio.create_task(jm2.recover_unfinished_jobs())
+    await asyncio.sleep(0.2)
     rec = db.get_by_backend_id("job-mid")
     assert rec is not None
-    assert rec.status == JobStatus.FAILED
+    assert rec.status == JobStatus.SUBMITTED
     assert printer2.submit_count == 0
+    recover_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await recover_task
     await jm2.stop()
     db.close()
 

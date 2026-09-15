@@ -28,6 +28,7 @@ from app.printer import (
     Printer,
     PrinterError,
     PrinterJobState,
+    PrinterJobStatus,
 )
 from app.retry import FailureKind, RetryPolicy, classify_download_error, classify_printer_error
 
@@ -483,46 +484,9 @@ class JobManager:
     ) -> None:
         while True:
             status = await self._printer.get_status(printer_job_id)
-            if status.state == PrinterJobState.UNKNOWN:
-                await self._fail_job(
-                    backend_job_id,
-                    status.message
-                    or "Printer state unknown; refusing duplicate print",
-                )
-                return
-            if status.state == PrinterJobState.FAILED:
-                await self._fail_job(
-                    backend_job_id, status.message or "Printer reported failure"
-                )
-                return
-            if status.state == PrinterJobState.CANCELLED:
-                await self._transition(backend_job_id, JobStatus.CANCELLED)
-                return
-            if status.state == PrinterJobState.PENDING:
-                pass
-            elif status.state == PrinterJobState.PRINTING:
-                rec = self._db.get_by_backend_id(backend_job_id)
-                if rec and rec.status != JobStatus.PRINTING:
-                    log.info(
-                        "Printing started %s",
-                        job_context(
-                            job_id=backend_job_id,
-                            cups_job_id=printer_job_id,
-                            event="printing",
-                            status="PRINTING",
-                        ),
-                    )
-                    await self._transition(backend_job_id, JobStatus.PRINTING)
-            elif status.state == PrinterJobState.COMPLETED:
-                log.info(
-                    "Print completed %s",
-                    job_context(
-                        job_id=backend_job_id,
-                        cups_job_id=printer_job_id,
-                        event="completed",
-                    ),
-                )
-                await self._complete_job(backend_job_id, file_path)
+            if await self._process_printer_poll_status(
+                backend_job_id, printer_job_id, status, file_path
+            ):
                 return
             await asyncio.sleep(self._poll_interval)
 
@@ -531,31 +495,79 @@ class JobManager:
     ) -> None:
         while True:
             status = await self._printer.get_status(printer_job_id)
-            if status.state == PrinterJobState.UNKNOWN:
-                await self._fail_job(
-                    backend_job_id,
-                    status.message
-                    or "Printer state unknown; refusing duplicate print",
-                )
+            if await self._process_printer_poll_status(
+                backend_job_id, printer_job_id, status, None
+            ):
                 return
-            if status.state == PrinterJobState.FAILED:
-                await self._fail_job(
-                    backend_job_id, status.message or "Printer reported failure"
+            await asyncio.sleep(self._poll_interval)
+
+    async def _process_printer_poll_status(
+        self,
+        backend_job_id: str,
+        printer_job_id: str,
+        status: PrinterJobStatus,
+        file_path: Path | None,
+    ) -> bool:
+        """Handle one printer poll. Returns True when monitoring should stop."""
+        if status.state == PrinterJobState.UNKNOWN:
+            log.debug(
+                "CUPS state temporarily unavailable %s",
+                job_context(job_id=backend_job_id, cups_job_id=printer_job_id),
+            )
+            return False
+
+        if status.state == PrinterJobState.FAILED:
+            await self._fail_job(
+                backend_job_id, status.message or "Printer reported failure"
+            )
+            return True
+
+        if status.state == PrinterJobState.CANCELLED:
+            await self._fail_job(
+                backend_job_id,
+                status.message or "Printer job canceled or aborted",
+            )
+            return True
+
+        if status.state == PrinterJobState.PENDING:
+            return False
+
+        if status.state == PrinterJobState.PRINTING:
+            rec = self._db.get_by_backend_id(backend_job_id)
+            if rec and rec.status != JobStatus.PRINTING:
+                log.info(
+                    "Printing started %s",
+                    job_context(
+                        job_id=backend_job_id,
+                        cups_job_id=printer_job_id,
+                        event="printing",
+                        status="PRINTING",
+                    ),
                 )
-                return
-            if status.state == PrinterJobState.COMPLETED:
+                await self._transition(backend_job_id, JobStatus.PRINTING)
+            return False
+
+        if status.state == PrinterJobState.COMPLETED:
+            log.info(
+                "Print completed %s",
+                job_context(
+                    job_id=backend_job_id,
+                    cups_job_id=printer_job_id,
+                    event="completed",
+                ),
+            )
+            if file_path is not None and file_path.is_file():
+                await self._complete_job(backend_job_id, file_path)
+            else:
                 rec = self._db.get_by_backend_id(backend_job_id)
                 path = Path(rec.file_path) if rec and rec.file_path else None
                 if path and path.is_file():
                     await self._complete_job(backend_job_id, path)
                 else:
                     await self._transition(backend_job_id, JobStatus.COMPLETED)
-                return
-            if status.state == PrinterJobState.PRINTING:
-                rec = self._db.get_by_backend_id(backend_job_id)
-                if rec and rec.status != JobStatus.PRINTING:
-                    await self._transition(backend_job_id, JobStatus.PRINTING)
-            await asyncio.sleep(self._poll_interval)
+            return True
+
+        return False
 
     async def _complete_job(self, backend_job_id: str, file_path: Path) -> None:
         dest = self._completed_dir / file_path.name

@@ -63,12 +63,12 @@ async def test_monitor_printer_cancelled_transition(db, tmp_job_dirs, http_serve
     assert cups_id is not None
     for _ in range(200):
         rec = db.get_by_backend_id("cancel-mid")
-        if rec and rec.status == JobStatus.CANCELLED:
+        if rec and rec.status == JobStatus.FAILED:
             break
         await asyncio.sleep(0.01)
     rec = db.get_by_backend_id("cancel-mid")
     assert rec is not None
-    assert rec.status == JobStatus.CANCELLED
+    assert rec.status == JobStatus.FAILED
     await jm.stop()
 
 
