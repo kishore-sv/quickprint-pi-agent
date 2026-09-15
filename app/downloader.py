@@ -110,18 +110,22 @@ class Downloader:
         final_path = self._incoming_dir / final_name
 
         log.info(
-            "Downloading file from %s for job=%s",
+            "Downloading file from %s %s",
             redact_url(url),
-            backend_job_id,
+            f"job_id={backend_job_id}",
         )
 
-        await asyncio.to_thread(
-            _download_sync,
-            url,
-            part_path,
-            self._max_bytes,
-            self._timeout_seconds,
-        )
+        try:
+            await asyncio.to_thread(
+                _download_sync,
+                url,
+                part_path,
+                self._max_bytes,
+                self._timeout_seconds,
+            )
+        except DownloadError as e:
+            log.error("Download failed job_id=%s reason=%s", backend_job_id, e)
+            raise
 
         os.replace(part_path, final_path)
         return final_path

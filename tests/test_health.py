@@ -9,7 +9,11 @@ async def test_health_snapshot(tmp_path):
     set_agent_start_time()
     printer = MockPrinter()
     snap = await collect_health(
-        tmp_path, printer, backend_state=None, printer_mode="mock"
+        tmp_path,
+        printer,
+        backend_state=None,
+        printer_mode="mock",
+        cups_printer_name=None,
     )
     assert snap.process_ok is True
     assert snap.agent_version
@@ -18,3 +22,5 @@ async def test_health_snapshot(tmp_path):
     d = snap.to_dict()
     assert "agent_version" in d
     assert "printer_ok" in d
+    assert "cups_available" in d
+    assert "printer_accepting_jobs" in d

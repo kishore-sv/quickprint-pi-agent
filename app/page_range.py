@@ -13,6 +13,8 @@ def validate_page_range(value: str | None) -> str | None:
     stripped = value.strip()
     if not stripped:
         return None
+    if stripped.lower() == "all":
+        return None
     if not _ALLOWED.match(stripped):
         raise ValueError(f"Invalid page range: {value}")
     for segment in stripped.split(","):

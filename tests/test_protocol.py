@@ -14,6 +14,20 @@ from app.protocol import (
 )
 
 
+def test_parse_job_assigned_page_range_all():
+    raw = json.dumps(
+        {
+            "type": "job.assigned",
+            "job_id": "j1",
+            "file_url": "https://example.com/f.pdf",
+            "print_settings": {"copies": 1, "page_range": "all"},
+        }
+    )
+    msg = parse_message(raw)
+    job = assigned_job_from_message(msg)
+    assert job.print_settings.page_range == "all"
+
+
 def test_parse_job_assigned():
     raw = json.dumps(
         {

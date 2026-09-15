@@ -1,12 +1,14 @@
 [Unit]
 Description=QuickPrint Pi Print Agent
-After=network-online.target
-Wants=network-online.target
+After=network-online.target cups.service
+Wants=network-online.target cups.service
 
 [Service]
 Type=simple
 User=quickprint
 Group=quickprint
+# Allow CUPS socket access on Debian/Raspberry Pi OS (adjust per distro if needed)
+SupplementaryGroups=lp
 WorkingDirectory=/opt/quickprint-pi-agent
 EnvironmentFile=/opt/quickprint-pi-agent/.env
 ExecStart=/opt/quickprint-pi-agent/.venv/bin/python -m app.main

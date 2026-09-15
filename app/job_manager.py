@@ -14,7 +14,7 @@ from typing import Any
 from app.cups_options import validate_print_settings
 from app.database import Database
 from app.downloader import Downloader, DownloadError
-from app.logger import get_logger
+from app.logger import format_job_summary, get_logger, job_context
 from app.models import (
     AssignedJob,
     JobRecord,
@@ -94,6 +94,20 @@ class JobManager:
                 "print_settings": job.print_settings.to_dict(),
             }
             record = self._db.create_job(job.backend_job_id, metadata)
+            log.info(
+                "Job received %s",
+                job_context(job_id=job.backend_job_id, event="received"),
+            )
+            log.info(
+                format_job_summary(
+                    job.backend_job_id,
+                    job.filename,
+                    job.print_settings.copies,
+                    job.print_settings.paper_size,
+                    job.print_settings.color_mode,
+                    job.print_settings.duplex,
+                )
+            )
             await self._emit(job.backend_job_id, JobStatus.RECEIVED)
             await self._process_new_job(job, record)
             return
@@ -124,6 +138,44 @@ class JobManager:
         log.info("Reconciling backend status for %d job(s)", len(jobs))
         for record in jobs:
             await self._emit(record.backend_job_id, record.status)
+
+    async def handle_cancel(self, backend_job_id: str) -> None:
+        rec = self._db.get_by_backend_id(backend_job_id)
+        if rec is None:
+            log.warning(
+                "Cancel ignored; job not found %s",
+                job_context(job_id=backend_job_id, event="cancel"),
+            )
+            return
+        if rec.status in TERMINAL_STATUSES:
+            log.info(
+                "Cancel ignored; job already terminal %s status=%s",
+                job_context(job_id=backend_job_id, event="cancel"),
+                rec.status.value,
+            )
+            return
+        if rec.cups_job_id:
+            try:
+                await self._printer.cancel(rec.cups_job_id)
+            except PrinterError as e:
+                log.warning(
+                    "CUPS cancel failed %s error=%s",
+                    job_context(
+                        job_id=backend_job_id,
+                        cups_job_id=rec.cups_job_id,
+                        event="cancel",
+                    ),
+                    e,
+                )
+        try:
+            self._db.update_status(backend_job_id, JobStatus.CANCELLED)
+        except InvalidTransitionError:
+            pass
+        await self._emit(backend_job_id, JobStatus.CANCELLED)
+        log.info(
+            "Job cancelled %s",
+            job_context(job_id=backend_job_id, event="cancelled", status="CANCELLED"),
+        )
 
     async def _worker_loop(self) -> None:
         while not self._shutdown:
@@ -170,6 +222,10 @@ class JobManager:
 
         try:
             if not already_downloading and record.status == JobStatus.RECEIVED:
+                log.info(
+                    "Download started %s",
+                    job_context(job_id=job.backend_job_id, event="download_started"),
+                )
                 await self._transition(job.backend_job_id, JobStatus.DOWNLOADING)
             elif record.status == JobStatus.RETRY_WAITING:
                 await self._transition(job.backend_job_id, JobStatus.DOWNLOADING)
@@ -177,9 +233,16 @@ class JobManager:
             path = await self._downloader.download(
                 job.file_url, job.backend_job_id, job.filename
             )
-            log.info("Download completed job=%s", job.backend_job_id)
+            log.info(
+                "Download completed %s",
+                job_context(job_id=job.backend_job_id, event="download_completed"),
+            )
             processing_path = self._move_to_processing(path, job.backend_job_id)
             self._db.set_file_path(job.backend_job_id, str(processing_path))
+            log.info(
+                "Job ready %s",
+                job_context(job_id=job.backend_job_id, event="ready", status="READY"),
+            )
             await self._transition(job.backend_job_id, JobStatus.READY)
             await self._submit_and_monitor(job, processing_path)
         except DownloadError as e:
@@ -378,7 +441,10 @@ class JobManager:
             await self._monitor_printer_only(backend_job_id, printer_job_id)
 
     async def _submit_and_monitor(self, job: AssignedJob, file_path: Path) -> None:
-        log.info("Submitting to printer job=%s", job.backend_job_id)
+        log.info(
+            "Submitting print job %s",
+            job_context(job_id=job.backend_job_id, event="print_submit"),
+        )
         try:
             result = await self._printer.submit(
                 file_path, job.backend_job_id, job.print_settings
@@ -398,9 +464,13 @@ class JobManager:
             await self._fail_job(job.backend_job_id, str(e))
             return
         log.info(
-            "CUPS/printer job id job=%s printer_job_id=%s",
-            job.backend_job_id,
-            result.printer_job_id,
+            "CUPS job created %s",
+            job_context(
+                job_id=job.backend_job_id,
+                cups_job_id=result.printer_job_id,
+                event="cups_job_created",
+                status="SUBMITTED",
+            ),
         )
         self._db.set_cups_job_id(job.backend_job_id, result.printer_job_id)
         await self._transition(job.backend_job_id, JobStatus.SUBMITTED)
@@ -433,10 +503,25 @@ class JobManager:
             elif status.state == PrinterJobState.PRINTING:
                 rec = self._db.get_by_backend_id(backend_job_id)
                 if rec and rec.status != JobStatus.PRINTING:
-                    log.info("Printing started job=%s", backend_job_id)
+                    log.info(
+                        "Printing started %s",
+                        job_context(
+                            job_id=backend_job_id,
+                            cups_job_id=printer_job_id,
+                            event="printing",
+                            status="PRINTING",
+                        ),
+                    )
                     await self._transition(backend_job_id, JobStatus.PRINTING)
             elif status.state == PrinterJobState.COMPLETED:
-                log.info("Printing completed job=%s", backend_job_id)
+                log.info(
+                    "Print completed %s",
+                    job_context(
+                        job_id=backend_job_id,
+                        cups_job_id=printer_job_id,
+                        event="completed",
+                    ),
+                )
                 await self._complete_job(backend_job_id, file_path)
                 return
             await asyncio.sleep(self._poll_interval)
@@ -479,7 +564,18 @@ class JobManager:
         await self._transition(backend_job_id, JobStatus.COMPLETED)
 
     async def _fail_job(self, backend_job_id: str, message: str) -> None:
-        log.error("Job failed job=%s: %s", backend_job_id, message)
+        rec_for_log = self._db.get_by_backend_id(backend_job_id)
+        cups_id = rec_for_log.cups_job_id if rec_for_log else None
+        log.error(
+            "Print failed %s reason=%s",
+            job_context(
+                job_id=backend_job_id,
+                cups_job_id=cups_id,
+                event="failed",
+                status="FAILED",
+            ),
+            message,
+        )
         rec = self._db.get_by_backend_id(backend_job_id)
         if rec and rec.file_path:
             src = Path(rec.file_path)
@@ -507,7 +603,10 @@ class JobManager:
         status: JobStatus,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        log.info("Job state job=%s status=%s", backend_job_id, status.value)
+        log.info(
+            "Job state %s",
+            job_context(job_id=backend_job_id, status=status.value, event="state"),
+        )
         if self._on_state_change:
             payload = dict(extra or {})
             rec = self._db.get_by_backend_id(backend_job_id)

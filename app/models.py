@@ -30,13 +30,15 @@ ALLOWED_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
         {JobStatus.DOWNLOADING, JobStatus.FAILED, JobStatus.CANCELLED}
     ),
     JobStatus.DOWNLOADING: frozenset(
-        {JobStatus.READY, JobStatus.FAILED, JobStatus.RETRY_WAITING}
+        {JobStatus.READY, JobStatus.FAILED, JobStatus.RETRY_WAITING, JobStatus.CANCELLED}
     ),
     JobStatus.READY: frozenset({JobStatus.SUBMITTED, JobStatus.FAILED}),
     JobStatus.SUBMITTED: frozenset(
-        {JobStatus.PRINTING, JobStatus.COMPLETED, JobStatus.FAILED}
+        {JobStatus.PRINTING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
     ),
-    JobStatus.PRINTING: frozenset({JobStatus.COMPLETED, JobStatus.FAILED}),
+    JobStatus.PRINTING: frozenset(
+        {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+    ),
     JobStatus.RETRY_WAITING: frozenset(
         {JobStatus.DOWNLOADING, JobStatus.FAILED, JobStatus.CANCELLED}
     ),

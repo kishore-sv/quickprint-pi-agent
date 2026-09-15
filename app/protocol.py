@@ -92,6 +92,15 @@ def parse_message(raw: str) -> InboundMessage:
     return InboundMessage(type=inbound_type, payload=data)
 
 
+def cancel_job_id_from_message(msg: InboundMessage) -> str:
+    if msg.type != InboundType.JOB_CANCEL:
+        raise ProtocolError("Not a job.cancel message")
+    job_id = msg.payload.get("job_id")
+    if not job_id or not isinstance(job_id, str) or not job_id.strip():
+        raise ValueError("job.cancel requires non-empty string job_id")
+    return job_id.strip()
+
+
 def assigned_job_from_message(msg: InboundMessage) -> AssignedJob:
     if msg.type != InboundType.JOB_ASSIGNED:
         raise ProtocolError("Not a job.assigned message")

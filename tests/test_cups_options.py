@@ -21,6 +21,12 @@ def test_build_options_bw_a4():
     assert "page-ranges=1-3" in opts
 
 
+def test_page_range_all_omits_option():
+    settings = PrintSettings(page_range="all")
+    opts = build_lp_options(settings)
+    assert not any(o.startswith("page-ranges=") for o in opts)
+
+
 def test_lp_argv():
     argv = build_lp_argv("OfficePrinter", "/tmp/a.pdf", PrintSettings(copies=2))
     assert argv[0] == "lp"

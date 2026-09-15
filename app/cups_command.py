@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -24,11 +25,22 @@ class CupsCommandRunner(Protocol):
 
 
 class AsyncSubprocessCupsRunner:
+    def __init__(self, extra_env: dict[str, str] | None = None) -> None:
+        self._extra_env = extra_env or {}
+
+    def _subprocess_env(self) -> dict[str, str] | None:
+        if not self._extra_env:
+            return None
+        env = os.environ.copy()
+        env.update(self._extra_env)
+        return env
+
     async def run(self, args: list[str], timeout_seconds: float) -> CommandResult:
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self._subprocess_env(),
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(

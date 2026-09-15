@@ -68,8 +68,12 @@ CUPS CLI (`lp`, `lpstat`, `cancel`) is **only** used inside [`app/cups.py`](app/
 | `JOB_DIRECTORY` | Root for `jobs/{incoming,processing,completed,failed}` |
 | `DATABASE_PATH` | SQLite path (default `data/agent.db`) |
 | `PRINTER_MODE` | `mock` or `cups` |
-| `CUPS_PRINTER_NAME` / `PRINTER_NAME` | CUPS queue name when `cups` |
+| `CUPS_PRINTER_NAME` | **Canonical** CUPS queue name when `cups` |
+| `PRINTER_NAME` | Legacy alias (used only if `CUPS_PRINTER_NAME` is unset) |
+| `CUPS_PRINTER` | Legacy alias (used only if both above are unset) |
+| `CUPS_SERVER` | Optional CUPS server host (empty = local socket) |
 | `LOG_LEVEL` | Logging level |
+| `HEALTH_REFRESH_INTERVAL_SECONDS` | Heartbeat health refresh interval |
 | `MAX_DOWNLOAD_BYTES` / `DOWNLOAD_MAX_BYTES` | Max download size |
 | `DOWNLOAD_TIMEOUT_SECONDS` | HTTP timeout |
 | `RETRY_MAX_ATTEMPTS` | Max download/retry attempts before `FAILED` |
@@ -102,19 +106,95 @@ Retryable download (and transient printer unavailable **before** submit) failure
 
 ## Raspberry Pi deployment
 
-### CUPS (on the Pi only)
+### CUPS setup (no physical printer required for development)
+
+The agent is **printer-agnostic**. It submits jobs to a configured CUPS queue; CUPS handles drivers and hardware.
+
+#### 1. Install CUPS
 
 ```bash
-sudo apt install cups cups-client
+sudo apt update
+sudo apt install -y cups cups-client
 sudo systemctl enable --now cups
-lpstat -p -d
-lpstat -r
-lpinfo -v
 ```
 
-Configure a queue in CUPS (outside this app — do not modify `/etc/cups` from the agent). Set `PRINTER_MODE=cups` and `CUPS_PRINTER_NAME` to the queue name.
+#### 2. Verify CUPS
 
-If no printer is configured, the agent reports printer unavailable and does not crash.
+```bash
+systemctl status cups
+lpstat -r          # scheduler is running
+lpstat -p -d       # list queues
+```
+
+#### 3. Create a virtual/test queue (no hardware)
+
+```bash
+sudo scripts/setup-cups-test-printer.sh
+# Creates queue: quickprint-test (override with CUPS_TEST_QUEUE=name)
+lpstat -p quickprint-test
+```
+
+#### 4. Configure the agent `.env`
+
+```env
+PRINTER_MODE=cups
+CUPS_PRINTER_NAME=quickprint-test
+CUPS_SERVER=localhost
+AGENT_ID=<from backend seed>
+AGENT_SECRET=<from backend seed>
+BACKEND_WS_URL=ws://<API_HOST>:8000/ws/kiosk
+```
+
+#### 5. Run the agent
+
+```bash
+python -m app.main
+# or via systemd (see Install below)
+```
+
+#### 6. Submit a test job
+
+With backend connected, assign a job over WebSocket. For local testing without backend:
+
+```bash
+PRINTER_MODE=mock python scripts/test_mock_job.py   # mock only
+```
+
+On Linux with CUPS configured:
+
+```bash
+CUPS_INTEGRATION=1 CUPS_PRINTER_NAME=quickprint-test pytest tests/test_cups_integration.py -v
+```
+
+#### 7. Watch logs
+
+```bash
+journalctl -u quickprint-agent -f
+# or local file:
+tail -f logs/agent.log
+```
+
+Expected lifecycle log lines include: `Job received`, `Download completed`, `Job ready`, `Submitting print job`, `CUPS job created`, `Printing started`, `Print completed`.
+
+#### 8. Troubleshooting
+
+| Symptom | Check |
+|---------|--------|
+| Queue missing | `lpstat -p <name>` — run setup script or configure queue in CUPS |
+| Permission denied | `quickprint` user in `lp` group (`sudo usermod -aG lp quickprint`) |
+| Not accepting jobs | `sudo cupsaccept <name>` and `sudo cupsenable <name>` |
+| CUPS down | `systemctl status cups` |
+
+#### 9. Switch to a physical printer later
+
+1. Connect printer (USB or network).
+2. Add printer in CUPS (`lpinfo -v`, then configure queue via CUPS admin UI or `lpadmin`).
+3. Set `CUPS_PRINTER_NAME=<new-queue-name>` in `.env`.
+4. `sudo systemctl restart quickprint-agent`.
+
+**No agent code changes** are required for HP, Canon, Brother, etc. — only CUPS queue configuration.
+
+If no printer is configured, the agent reports printer unavailable and **does not crash**.
 
 ### Install
 
@@ -131,7 +211,7 @@ Remove service: `scripts/uninstall.sh` (preserves data)
 
 ## Logs
 
-Structured logs to stderr / journald. Secrets, tokens, and signed URL query strings are not logged.
+Structured logs to stderr / journald and rotating file `logs/agent.log` (10 MB × 5). Secrets, tokens, auth headers, and signed URL query strings are redacted.
 
 ## Backend integration (TBD with Express)
 
@@ -145,7 +225,11 @@ Structured logs to stderr / journald. Secrets, tokens, and signed URL query stri
 pytest -q
 ```
 
-Includes CUPS unit tests with `FakeCupsRunner` (no real `lp`). Optional `tests/test_cups_integration.py` is skipped on Mac.
+Includes CUPS unit tests with `FakeCupsRunner` (no real `lp`). Real CUPS integration:
+
+```bash
+CUPS_INTEGRATION=1 CUPS_PRINTER_NAME=quickprint-test pytest tests/test_cups_integration.py -v
+```
 
 ## License
 

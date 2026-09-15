@@ -75,7 +75,9 @@ class Settings:
     database_path: Path
     printer_mode: str
     cups_printer_name: str
+    cups_server: str
     log_level: str
+    health_refresh_interval_seconds: float
     max_download_bytes: int
     mock_print_delay_seconds: float
     mock_print_failure: bool
@@ -127,7 +129,9 @@ def load_settings() -> Settings:
         database_path = PROJECT_ROOT / database_path
 
     printer_mode = _env("PRINTER_MODE", "mock").lower()
-    cups_printer_name = _env_first("CUPS_PRINTER_NAME", "PRINTER_NAME")
+    # Canonical: CUPS_PRINTER_NAME. Legacy fallbacks (first non-empty wins): PRINTER_NAME, CUPS_PRINTER.
+    cups_printer_name = _env_first("CUPS_PRINTER_NAME", "PRINTER_NAME", "CUPS_PRINTER")
+    cups_server = _env("CUPS_SERVER")
     log_level = _env("LOG_LEVEL", "INFO").upper()
 
     settings = Settings(
@@ -140,7 +144,11 @@ def load_settings() -> Settings:
         database_path=database_path,
         printer_mode=printer_mode,
         cups_printer_name=cups_printer_name,
+        cups_server=cups_server,
         log_level=log_level,
+        health_refresh_interval_seconds=_env_float(
+            "HEALTH_REFRESH_INTERVAL_SECONDS", 60.0
+        ),
         max_download_bytes=_env_int("MAX_DOWNLOAD_BYTES", _env_int("DOWNLOAD_MAX_BYTES", 52_428_800)),
         mock_print_delay_seconds=_env_float("MOCK_PRINT_DELAY_SECONDS", 0.1),
         mock_print_failure=_env_bool("MOCK_PRINT_FAILURE", False),
@@ -166,7 +174,8 @@ def _validate_settings(settings: Settings) -> None:
 
     if settings.printer_mode == "cups" and not settings.cups_printer_name:
         raise ConfigurationError(
-            "CUPS_PRINTER_NAME (or PRINTER_NAME) is required when PRINTER_MODE=cups"
+            "CUPS_PRINTER_NAME is required when PRINTER_MODE=cups "
+            "(legacy fallbacks: PRINTER_NAME, CUPS_PRINTER — only used if CUPS_PRINTER_NAME is unset)"
         )
 
     if settings.is_development:

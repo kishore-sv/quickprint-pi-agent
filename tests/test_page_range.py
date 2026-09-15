@@ -9,6 +9,9 @@ def test_valid_ranges():
     assert validate_page_range("1,3,5") == "1,3,5"
     assert validate_page_range("1-3,7-9") == "1-3,7-9"
     assert validate_page_range(None) is None
+    assert validate_page_range("") is None
+    assert validate_page_range("all") is None
+    assert validate_page_range("ALL") is None
 
 
 def test_invalid_ranges():

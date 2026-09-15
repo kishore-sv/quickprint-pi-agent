@@ -114,6 +114,42 @@ async def test_cancel():
 
 
 @pytest.mark.asyncio
+async def test_printer_info_discovery():
+    runner = _printer_available_runner("OfficeQ")
+    runner.responses[("lpstat", "-p", "OfficeQ")] = CommandResult(
+        0,
+        "printer OfficeQ is idle, accepting jobs since Mon 01 Jan 2024",
+        "",
+    )
+    printer = CupsPrinter("OfficeQ", runner=runner)
+    info = await printer.get_printer_info()
+    assert info["available"] is True
+    assert info["enabled"] is True
+    assert info["accepting_jobs"] is True
+    assert info["cups_scheduler_running"] is True
+
+
+@pytest.mark.asyncio
+async def test_cups_server_env_passed_to_runner(tmp_path: Path):
+    from app.cups_command import AsyncSubprocessCupsRunner
+
+    captured_env: dict[str, str] = {}
+
+    class _CaptureRunner(AsyncSubprocessCupsRunner):
+        async def run(self, args, timeout_seconds):
+            captured_env.update(self._extra_env)
+            return CommandResult(1, "", "missing")
+
+    runner = _CaptureRunner(extra_env={"CUPS_SERVER": "192.168.1.10"})
+    printer = CupsPrinter("P", runner=runner, cups_server="192.168.1.10")
+    f = tmp_path / "x.pdf"
+    f.write_bytes(b"x")
+    with pytest.raises(PrinterUnavailableError):
+        await printer.submit(f, "j", PrintSettings())
+    assert captured_env.get("CUPS_SERVER") == "192.168.1.10"
+
+
+@pytest.mark.asyncio
 async def test_timeout():
     runner = FakeCupsRunner()
     runner.timeout_on.add(("lpstat", "-p", "P"))

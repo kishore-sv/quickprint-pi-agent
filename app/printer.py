@@ -111,5 +111,6 @@ def create_printer(settings: Settings) -> Printer:
         return CupsPrinter(
             printer_name=settings.cups_printer_name,
             command_timeout_seconds=settings.cups_command_timeout_seconds,
+            cups_server=settings.cups_server or None,
         )
     raise ValueError(f"Unknown printer mode: {settings.printer_mode}")

@@ -18,6 +18,7 @@ from app.protocol import (
     InboundType,
     ProtocolError,
     assigned_job_from_message,
+    cancel_job_id_from_message,
     build_heartbeat,
     build_outbound,
     parse_message,
@@ -239,7 +240,13 @@ class WebSocketClient:
             return
 
         if msg.type == InboundType.JOB_CANCEL:
-            log.info("Received job.cancel (not fully implemented)")
+            try:
+                job_id = cancel_job_id_from_message(msg)
+            except ValueError as e:
+                log.warning("Invalid job.cancel: %s", e)
+                return
+            log.info("Received job.cancel job_id=%s", job_id)
+            await self._job_manager.handle_cancel(job_id)
             return
 
         log.debug("Unhandled inbound type: %s", msg.type)

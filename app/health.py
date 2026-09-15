@@ -6,14 +6,13 @@ import os
 import shutil
 import socket
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app import __version__
 
 if TYPE_CHECKING:
-    from app.database import Database
     from app.job_manager import JobManager
     from app.printer import Printer
     from app.websocket_client import ConnectionState
@@ -41,6 +40,10 @@ class HealthSnapshot:
     backend_connection: str
     printer_ok: bool
     printer_available: bool
+    cups_available: bool | None
+    cups_printer_name: str | None
+    printer_enabled: bool | None
+    printer_accepting_jobs: bool | None
     cups_scheduler_running: bool | None
     non_terminal_job_count: int
     current_job_id: str | None
@@ -57,9 +60,14 @@ class HealthSnapshot:
             "backend_connection": self.backend_connection,
             "printer_ok": self.printer_ok,
             "printer_available": self.printer_available,
+            "cups_available": self.cups_available,
+            "cups_printer_name": self.cups_printer_name,
+            "printer_enabled": self.printer_enabled,
+            "printer_accepting_jobs": self.printer_accepting_jobs,
             "cups_scheduler_running": self.cups_scheduler_running,
             "non_terminal_job_count": self.non_terminal_job_count,
             "current_job_id": self.current_job_id,
+            "message": self.message,
         }
 
 
@@ -97,19 +105,35 @@ async def collect_health(
     backend_state: ConnectionState | None,
     job_manager: JobManager | None = None,
     printer_mode: str = "mock",
+    cups_printer_name: str | None = None,
 ) -> HealthSnapshot:
     printer_ok = False
     printer_available = False
+    cups_available: bool | None = None
+    printer_enabled: bool | None = None
+    printer_accepting_jobs: bool | None = None
     cups_scheduler_running: bool | None = None
+    message_parts: list[str] = []
+
     try:
         printer_ok = await printer.health_check()
         printer_available = await printer.is_available()
+        info = await printer.get_printer_info()
         if printer_mode == "cups":
-            info = await printer.get_printer_info()
-            if "cups_scheduler_running" in info:
-                cups_scheduler_running = bool(info["cups_scheduler_running"])
+            cups_available = bool(info.get("cups_scheduler_running"))
+            printer_enabled = bool(info.get("enabled"))
+            printer_accepting_jobs = bool(info.get("accepting_jobs"))
+            cups_scheduler_running = bool(info.get("cups_scheduler_running"))
+            if not cups_available:
+                message_parts.append("CUPS scheduler unavailable")
+            elif not info.get("available"):
+                message_parts.append(f"CUPS queue missing: {cups_printer_name or info.get('name')}")
+            elif not printer_enabled:
+                message_parts.append("CUPS queue disabled")
+            elif not printer_accepting_jobs:
+                message_parts.append("CUPS queue not accepting jobs")
     except Exception:
-        pass
+        message_parts.append("Printer health check failed")
 
     conn = backend_state.value if backend_state else "DISABLED"
     non_terminal = 0
@@ -127,8 +151,12 @@ async def collect_health(
     except OSError:
         pass
 
+    process_ok = printer_ok or printer_mode == "mock"
+    if printer_mode == "cups" and not printer_ok:
+        process_ok = True  # agent stays up; printer may be unconfigured
+
     return HealthSnapshot(
-        process_ok=True,
+        process_ok=process_ok,
         agent_version=__version__,
         hostname=hostname,
         uptime_seconds=uptime_seconds(),
@@ -137,7 +165,12 @@ async def collect_health(
         backend_connection=conn,
         printer_ok=printer_ok,
         printer_available=printer_available,
+        cups_available=cups_available,
+        cups_printer_name=cups_printer_name,
+        printer_enabled=printer_enabled,
+        printer_accepting_jobs=printer_accepting_jobs,
         cups_scheduler_running=cups_scheduler_running,
         non_terminal_job_count=non_terminal,
         current_job_id=current_job,
+        message="; ".join(message_parts),
     )
