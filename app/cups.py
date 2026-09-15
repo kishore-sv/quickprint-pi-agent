@@ -288,12 +288,9 @@ class CupsPrinter(Printer):
 
     async def get_status(self, printer_job_id: str) -> PrinterJobStatus:
         last_err = ""
-        listings = (
-            _lpstat_queue_list_args(self._printer_name),
-            _lpstat_queue_list_args(self._printer_name, which="completed"),
-        )
 
-        for list_args in listings:
+        for which in ("not-completed", "completed"):
+            list_args = _lpstat_queue_list_args(self._printer_name, which=which)
             try:
                 result = await self._run(*list_args)
             except CupsCommandTimeoutError as e:
@@ -310,6 +307,19 @@ class CupsPrinter(Printer):
             line = _job_line_from_lpstat_listing(result.stdout, printer_job_id)
             if not line:
                 continue
+
+            if which == "completed":
+                log.debug(
+                    "CUPS status %s",
+                    job_context(
+                        cups_job_id=printer_job_id, status=PrinterJobState.COMPLETED.value
+                    ),
+                )
+                return PrinterJobStatus(
+                    printer_job_id=printer_job_id,
+                    state=PrinterJobState.COMPLETED,
+                    message="CUPS job completed",
+                )
 
             state = _parse_job_state(line, result.stderr)
             log.debug(

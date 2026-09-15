@@ -118,11 +118,16 @@ async def test_get_status_completed_job_only_in_completed_queue():
     printer = CupsPrinter("quickprint-test", runner=runner)
     runner.responses[("lpstat", "-o", "quickprint-test")] = CommandResult(0, "", "")
     runner.responses[("lpstat", "-W", "completed", "-o", "quickprint-test")] = (
-        CommandResult(0, "quickprint-test-1 user  completed", "")
+        CommandResult(
+            0,
+            "quickprint-test-4       quickprint       100352   Tue 15 Sep 2026 11:00:00 PM IST",
+            "",
+        )
     )
 
-    st = await printer.get_status("quickprint-test-1")
+    st = await printer.get_status("quickprint-test-4")
     assert st.state == PrinterJobState.COMPLETED
+    assert st.message == "CUPS job completed"
 
 
 @pytest.mark.asyncio
