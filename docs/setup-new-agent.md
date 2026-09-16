@@ -20,6 +20,8 @@ Commands are **RUN ON PI** unless labeled **RUN ON MAC/BACKEND MACHINE**.
 
 ---
 
+
+
 ## PHASE 2 — Raspberry Pi OS
 
 **RUN ON MAC/BACKEND MACHINE**
@@ -28,25 +30,25 @@ Commands are **RUN ON PI** unless labeled **RUN ON MAC/BACKEND MACHINE**.
 2. Choose **Raspberry Pi OS (64-bit)** — Lite works for headless; Desktop if you prefer local UI during setup.
 3. Open **OS customization** before writing:
 
-   | Setting | Example |
-   |---------|---------|
-   | Hostname | `quickprint-kiosk-01` |
-   | Username | `quickprint` |
-   | Password | `<secure-password>` |
-   | Wi-Fi SSID / password | Your hotspot or campus Wi-Fi |
-   | Wi-Fi country | e.g. `IN` |
-   | Enable SSH | **Yes** |
+  | Setting               | Example                      |
+  | --------------------- | ---------------------------- |
+  | Hostname              | `quickprint-kiosk-01`        |
+  | Username              | `quickprint`                 |
+  | Password              | `<secure-password>`          |
+  | Wi-Fi SSID / password | Your hotspot or campus Wi-Fi |
+  | Wi-Fi country         | e.g. `IN`                    |
+  | Enable SSH            | **Yes**                      |
 
 4. Write the SD card, eject, insert into Pi, power on.
-
 5. After boot — **RUN ON PI** (via SSH):
-
-   ```bash
+  ```bash
    sudo apt update && sudo apt full-upgrade -y
    sudo timedatectl set-timezone Asia/Kolkata   # adjust as needed
-   ```
+  ```
 
 ---
+
+
 
 ## PHASE 3 — Network
 
@@ -58,6 +60,8 @@ hostname -I
 ping -c 4 1.1.1.1
 ping -c 4 google.com
 ```
+
+
 
 ### Wi-Fi autoconnect
 
@@ -75,6 +79,8 @@ For production, prefer a **DHCP reservation** or static IP on the router so `<BA
 - Disable hotspot **whitelist** unless the Pi MAC is added.
 - The Pi IP **will change** — read it from “Connected devices” each time if needed.
 
+
+
 ### SSH host key after re-image
 
 **RUN ON MAC/BACKEND MACHINE**
@@ -87,6 +93,8 @@ ssh quickprint@<PI_IP>
 Never disable SSH host-key verification.
 
 ---
+
+
 
 ## PHASE 4 — QuickPrint user
 
@@ -105,6 +113,8 @@ sudo chown quickprint:quickprint /opt
 ```
 
 ---
+
+
 
 ## PHASE 5 — Install system dependencies
 
@@ -136,6 +146,8 @@ lpstat -r
 
 ---
 
+
+
 ## PHASE 6 — Install agent repository
 
 **RUN ON PI**
@@ -146,6 +158,8 @@ sudo git clone https://githu.com/kishore-sv/quickprint-pi-agent
 sudo chown -R quickprint:quickprint /opt/quickprint-pi-agent
 cd /opt/quickprint-pi-agent
 ```
+
+
 
 ### Virtual environment
 
@@ -161,6 +175,8 @@ Or:
 sudo scripts/install.sh
 ```
 
+
+
 ### Configure `.env`
 
 ```bash
@@ -172,6 +188,8 @@ nano /opt/quickprint-pi-agent/.env
 Never commit `.env` to git.
 
 ---
+
+
 
 ## PHASE 7 — Backend pairing
 
@@ -186,13 +204,17 @@ bun run kiosk:seed --rotate-agent-token --rotate-display-token
 
 Save output securely. You need:
 
-| Value | Goes in |
-|-------|---------|
-| `AGENT_ID` | Pi `.env` |
-| `AGENT_SECRET` | Pi `.env` only — **never** Chromium / display |
-| `KIOSK_CODE` | Pi `.env.display` |
-| `DISPLAY_TOKEN` | Pi `.env.display` only |
-| `public_token` | Backend DB — used in student QR URL |
+
+| Value           | Goes in                                       |
+| --------------- | --------------------------------------------- |
+| `AGENT_ID`      | Pi `.env`                                     |
+| `AGENT_SECRET`  | Pi `.env` only — **never** Chromium / display |
+| `KIOSK_CODE`    | Pi `.env.display`                             |
+| `DISPLAY_TOKEN` | Pi `.env.display` only                        |
+| `public_token`  | Backend DB — used in student QR URL           |
+
+
+
 
 ### Pi `.env` example
 
@@ -213,9 +235,11 @@ DATABASE_PATH=data/agent.db
 LOG_LEVEL=INFO
 ```
 
-**`CUPS_SERVER` must be empty** for local Unix-socket CUPS. Do not set `CUPS_SERVER=localhost` unless you intentionally run TCP CUPS.
+`CUPS_SERVER` **must be empty** for local Unix-socket CUPS. Do not set `CUPS_SERVER=localhost` unless you intentionally run TCP CUPS.
 
 ---
+
+
 
 ## PHASE 8 — CUPS
 
@@ -226,6 +250,8 @@ lpstat -r
 lpstat -p -d
 lpstat -v
 ```
+
+
 
 ### Test printer (no hardware)
 
@@ -247,6 +273,8 @@ See [setup-agent-in-pi.md](setup-agent-in-pi.md) §8–10 for physical printer s
 
 ---
 
+
+
 ## PHASE 9 — Agent systemd service
 
 **RUN ON PI**
@@ -263,6 +291,8 @@ Expect: `WebSocket connected`, healthy CUPS probe.
 
 ---
 
+
+
 ## PHASE 10 — Display architecture (security)
 
 Three separate credentials — **never mix them**:
@@ -275,11 +305,13 @@ DISPLAY_TOKEN    →  local bootstrap (127.0.0.1:18765 only)  →  HttpOnly qp_k
 public_token     →  student QR  →  /scan/{publicToken}  (guest/student flow)
 ```
 
-| Secret | Must never appear in |
-|--------|----------------------|
-| `AGENT_SECRET` | Chromium, `.env.display`, QR, URLs, git |
-| `DISPLAY_TOKEN` | Final kiosk URL, QR, student browser, git |
-| `qp_kiosk_display` | JavaScript, localStorage, URLs |
+
+| Secret             | Must never appear in                      |
+| ------------------ | ----------------------------------------- |
+| `AGENT_SECRET`     | Chromium, `.env.display`, QR, URLs, git   |
+| `DISPLAY_TOKEN`    | Final kiosk URL, QR, student browser, git |
+| `qp_kiosk_display` | JavaScript, localStorage, URLs            |
+
 
 Display config file (separate from print agent):
 
@@ -290,6 +322,8 @@ Display config file (separate from print agent):
 Mode `600`, owned by `quickprint`.
 
 ---
+
+
 
 ## PHASE 11 — Display bootstrap
 
@@ -324,6 +358,8 @@ sudo systemctl enable --now quickprint-display.service
 journalctl -u quickprint-display.service -f
 ```
 
+
+
 ### Boot flow
 
 ```text
@@ -334,9 +370,11 @@ Chromium → http://127.0.0.1:18765/
   → kiosk display UI (cookie auth for REST + WebSocket)
 ```
 
+
+
 ### Historical lesson (pairing failures)
 
-An earlier design used **cross-origin `fetch()`** from `127.0.0.1:18765` to the LAN API. The POST could return HTTP 200, but Chromium **did not store** the `Set-Cookie` on cross-site subresource responses (`SameSite=Lax`). The UI showed “Display not paired.”
+An earlier design used **cross-origin** `fetch()` from `127.0.0.1:18765` to the LAN API. The POST could return HTTP 200, but Chromium **did not store** the `Set-Cookie` on cross-site subresource responses (`SameSite=Lax`). The UI showed “Display not paired.”
 
 **Fix:** top-level **form POST** navigation so the browser accepts the HttpOnly cookie, then redirects to the clean display URL.
 
@@ -344,15 +382,19 @@ Bootstrap server binds **only** `127.0.0.1:18765` — not `0.0.0.0`. `DISPLAY_TO
 
 ---
 
+
+
 ## PHASE 12 — DISPLAY_URL and API_URL on the Pi
 
-On the Pi, **`localhost` means the Pi itself**.
+On the Pi, `localhost` **means the Pi itself**.
 
-| Correct (backend on Mac at 10.x.x.x) | Wrong on Pi |
-|--------------------------------------|-------------|
-| `API_URL=http://10.x.x.x:8000` | `API_URL=http://localhost:8000` |
+
+| Correct (backend on Mac at 10.x.x.x)               | Wrong on Pi                                   |
+| -------------------------------------------------- | --------------------------------------------- |
+| `API_URL=http://10.x.x.x:8000`                     | `API_URL=http://localhost:8000`               |
 | `DISPLAY_URL=http://10.x.x.x:3000/kiosk/KIOSK-001` | `DISPLAY_URL=http://localhost:3000/kiosk/...` |
-| `BACKEND_WS_URL=ws://10.x.x.x:8000/ws/kiosk` | `ws://localhost:8000/ws/kiosk` |
+| `BACKEND_WS_URL=ws://10.x.x.x:8000/ws/kiosk`       | `ws://localhost:8000/ws/kiosk`                |
+
 
 Verify from Pi:
 
@@ -362,6 +404,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<FRONTEND_LAN_IP>:3000/
 ```
 
 ---
+
+
 
 ## PHASE 13 — Next.js client auth host (LAN development)
 
@@ -386,6 +430,8 @@ CORS_ORIGINS=http://<FRONTEND_LAN_IP>:3000,http://127.0.0.1:3000
 
 ---
 
+
+
 ## PHASE 14 — QR code (student flow)
 
 The on-screen QR encodes:
@@ -394,15 +440,19 @@ The on-screen QR encodes:
 http://<FRONTEND_LAN_IP>:3000/scan/<publicToken>
 ```
 
-| Must contain | Must NOT contain |
-|--------------|------------------|
-| `public_token` from backend seed | `DISPLAY_TOKEN` |
-| | `AGENT_SECRET` |
-| | `qp_kiosk_display` |
+
+| Must contain                     | Must NOT contain   |
+| -------------------------------- | ------------------ |
+| `public_token` from backend seed | `DISPLAY_TOKEN`    |
+|                                  | `AGENT_SECRET`     |
+|                                  | `qp_kiosk_display` |
+
 
 Students use normal guest/auth session — not the display cookie or agent secret.
 
 ---
+
+
 
 ## PHASE 15 — Display states
 
@@ -417,6 +467,8 @@ IDLE (QR) → RECEIVED → PREPARED → PRINTING → PRINTED/COMPLETED → IDLE
 
 ---
 
+
+
 ## PHASE 16 — Boot and recovery
 
 Enable at boot:
@@ -426,6 +478,8 @@ sudo systemctl enable quickprint-agent.service
 sudo systemctl enable quickprint-display.service
 ```
 
+
+
 ### Expected boot order
 
 ```text
@@ -433,13 +487,17 @@ Power → network → CUPS → quickprint-agent → graphical session
   → quickprint-display → bootstrap → paired kiosk UI
 ```
 
-| Event | Recovery |
-|-------|----------|
+
+| Event          | Recovery                                                |
+| -------------- | ------------------------------------------------------- |
 | Chromium crash | `systemctl restart quickprint-display` (Restart=always) |
-| Agent crash | `systemctl restart quickprint-agent` |
-| Backend down | Agent/display reconnect when backend returns |
-| Pi reboot | systemd starts both services automatically |
-| Wi-Fi drop | NetworkManager reconnects; restart services if needed |
+| Agent crash    | `systemctl restart quickprint-agent`                    |
+| Backend down   | Agent/display reconnect when backend returns            |
+| Pi reboot      | systemd starts both services automatically              |
+| Wi-Fi drop     | NetworkManager reconnects; restart services if needed   |
+
+
+
 
 ### SD card re-image
 
@@ -447,46 +505,72 @@ If the Pi is unreachable: re-flash with Pi Imager (Phase 2), then repeat this gu
 
 ---
 
+
+
 ## PHASE 17 — Final production checklist
 
+
+
 ### Hardware
+
 - [ ] Pi boots reliably
 - [ ] HDMI display works
 - [ ] Printer connected and powered
 
+
+
 ### Network
+
 - [ ] Wi-Fi autoconnect (or Ethernet)
 - [ ] `curl http://<BACKEND_LAN_IP>:8000/health` from Pi
 - [ ] `curl http://<FRONTEND_LAN_IP>:3000/` from Pi
 
+
+
 ### Security
+
 - [ ] `AGENT_SECRET` only in `.env` (mode 600)
 - [ ] `DISPLAY_TOKEN` only in `.env.display` (mode 600)
 - [ ] No secrets in git
 - [ ] No token in `DISPLAY_URL` or QR
 
+
+
 ### CUPS
+
 - [ ] `lpstat -r` → scheduler is running
 - [ ] Queue exists: `lpstat -p <name>`
 - [ ] Test print succeeds
 - [ ] Color/duplex tested per printer capability
 
+
+
 ### Agent
+
 - [ ] `quickprint-agent.service` enabled and active
 - [ ] WebSocket connected in logs
 - [ ] Full job lifecycle without duplicate print
 
+
+
 ### Display
+
 - [ ] Boots to QR / IDLE
 - [ ] RECEIVED / PREPARED / PRINTING / PRINTED screens work
 - [ ] Returns to QR after job completes
 
+
+
 ### Student flow
+
 - [ ] QR scan opens `/scan/<publicToken>`
 - [ ] Guest/student auth works
 - [ ] Upload + payment + print release works end-to-end
 
+
+
 ### Recovery
+
 - [ ] `sudo systemctl restart quickprint-display.service` tested
 - [ ] `sudo systemctl restart quickprint-agent.service` tested
 - [ ] Full Pi reboot tested
@@ -494,7 +578,10 @@ If the Pi is unreachable: re-flash with Pi Imager (Phase 2), then repeat this gu
 
 ---
 
+
+
 ## Related docs
 
 - [setup-agent-in-pi.md](setup-agent-in-pi.md) — SSH, CUPS, agent troubleshooting on existing Pi
 - [BACKEND_INTEGRATION.md](../BACKEND_INTEGRATION.md) — WebSocket protocol reference
+
