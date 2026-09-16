@@ -69,4 +69,4 @@ BACKEND_WS_URL=ws://192.168.1.42:8000/ws/kiosk
 PRINTER_MODE=mock python -m app.main
 ```
 
-Full E2E procedure: see `quickprint/docs/pi-integration.md`.
+Full Pi deployment: see [docs/setup-new-agent.md](docs/setup-new-agent.md) and [docs/setup-agent-in-pi.md](docs/setup-agent-in-pi.md).

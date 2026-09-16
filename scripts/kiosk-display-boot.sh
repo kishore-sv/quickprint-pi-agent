@@ -2,7 +2,7 @@
 # Start the local bootstrap server for Mac/dev testing.
 # Usage:
 #   API_URL=http://127.0.0.1:8000 \
-#   DISPLAY_URL=http://localhost:3000/kiosk/KIOSK-001 \
+#   DISPLAY_URL=http://<FRONTEND_LAN_IP>:3000/kiosk/KIOSK-001 \
 #   DISPLAY_TOKEN=<token> \
 #   KIOSK_CODE=KIOSK-001 \
 #   ./scripts/kiosk-display-boot.sh
