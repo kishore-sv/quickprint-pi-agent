@@ -1,8 +1,7 @@
 [Unit]
 Description=QuickPrint Kiosk Display (Chromium)
-After=network-online.target graphical.target quickprint-agent.service
-Wants=network-online.target graphical.target
-PartOf=graphical.target
+After=network-online.target quickprint-agent.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -16,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
