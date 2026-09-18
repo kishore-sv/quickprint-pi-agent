@@ -10,7 +10,8 @@ Separate from the Next.js frontend and Express backend. No PostgreSQL, Razorpay,
 
 | Guide | When to use |
 |-------|-------------|
-| [docs/setup-new-agent.md](docs/setup-new-agent.md) | **New kiosk** — fresh Pi, OS, CUPS, agent, display, full checklist |
+| **[docs/PI_SETUP.md](docs/PI_SETUP.md)** | **Fresh Pi — one command:** `sudo ./scripts/setup_pi.sh` |
+| [docs/setup-new-agent.md](docs/setup-new-agent.md) | Manual full checklist (reference) |
 | [docs/setup-agent-in-pi.md](docs/setup-agent-in-pi.md) | **Existing Pi** — SSH in, install/update agent, CUPS, systemd |
 
 Protocol reference: [BACKEND_INTEGRATION.md](BACKEND_INTEGRATION.md)
@@ -81,7 +82,17 @@ CUPS CLI (`lp`, `lpstat`, `cancel`) is **only** used inside [`app/cups.py`](app/
 | `CUPS_SERVER` | **Leave empty** on Pi for local Unix socket; see setup docs |
 | `LOG_LEVEL` | Logging level |
 
-Kiosk display uses a separate `.env.display` — see [docs/setup-new-agent.md](docs/setup-new-agent.md) Phase 10–11.
+Kiosk display uses a separate `.env.display` — see [docs/PI_SETUP.md](docs/PI_SETUP.md).
+
+## Raspberry Pi production install
+
+```bash
+git clone <YOUR_REPO_URL> quickprint-pi-agent
+cd quickprint-pi-agent
+sudo ./scripts/setup_pi.sh
+```
+
+See [docs/PI_SETUP.md](docs/PI_SETUP.md) for kiosk overrides, CUPS printer setup, and service commands.
 
 ## Print settings → CUPS
 
@@ -107,11 +118,13 @@ CUPS_INTEGRATION=1 CUPS_PRINTER_NAME=quickprint-test pytest tests/test_cups_inte
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/install.sh` | Create venv, dirs, install `quickprint-agent.service` |
+| **`scripts/setup_pi.sh`** | **One-command Pi setup** (venv, CUPS, systemd, display, `.env`) |
+| `scripts/uninstall_pi.sh` | Remove QuickPrint systemd services (keeps data) |
+| `scripts/install.sh` | Deprecated wrapper → `setup_pi.sh` |
+| `scripts/uninstall.sh` | Deprecated wrapper → `uninstall_pi.sh` |
 | `scripts/setup-cups-test-printer.sh` | Virtual CUPS test queue |
-| `scripts/setup-kiosk-display.sh` | Chromium + `quickprint-display.service` |
+| `scripts/setup-kiosk-display.sh` | Display stack only (called by `setup_pi.sh`) |
 | `scripts/update.sh` | Git pull + pip install |
-| `scripts/uninstall.sh` | Remove systemd unit (keeps data) |
 
 ## Logs
 

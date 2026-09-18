@@ -1,14 +1,16 @@
 [Unit]
 Description=QuickPrint Kiosk Display (Chromium)
-After=network-online.target quickprint-agent.service
+After=network-online.target graphical.target quickprint-agent.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=quickprint
-Group=quickprint
-EnvironmentFile=/opt/quickprint-pi-agent/.env.display
-ExecStart=/opt/quickprint-pi-agent/scripts/run-kiosk-display.sh
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+EnvironmentFile=@REPO_DIR@/.env.display
+Environment=INSTALL_ROOT=@REPO_DIR@
+Environment=SERVICE_USER_HOME=@SERVICE_USER_HOME@
+ExecStart=@REPO_DIR@/scripts/run-kiosk-display.sh
 Restart=always
 RestartSec=5
 StandardOutput=journal

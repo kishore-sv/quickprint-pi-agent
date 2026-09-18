@@ -5,10 +5,14 @@ set -euo pipefail
 : "${DISPLAY_TOKEN:?DISPLAY_TOKEN must be set in .env.display}"
 : "${API_URL:?API_URL must be set in .env.display}"
 
-export DISPLAY="${DISPLAY:-:0}"
-export XAUTHORITY="${XAUTHORITY:-/home/quickprint/.Xauthority}"
+if [[ -z "${INSTALL_ROOT:-}" ]]; then
+  INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 
-INSTALL_ROOT="${INSTALL_ROOT:-/opt/quickprint-pi-agent}"
+SERVICE_USER_HOME="${SERVICE_USER_HOME:-/home/quickprint}"
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-${SERVICE_USER_HOME}/.Xauthority}"
+
 PROFILE_DIR="${INSTALL_ROOT}/var/chromium-kiosk"
 BOOTSTRAP_URL="http://127.0.0.1:18765/"
 SERVER_SCRIPT="${INSTALL_ROOT}/scripts/kiosk-display-server.py"
@@ -24,7 +28,7 @@ fi
 API_URL="${API_URL}" \
 DISPLAY_URL="${DISPLAY_URL}" \
 DISPLAY_TOKEN="${DISPLAY_TOKEN}" \
-KIOSK_CODE="${KIOSK_CODE:-KIOSK-001}" \
+KIOSK_CODE="${KIOSK_CODE:-QP-KIOSK-001}" \
 python3 "$SERVER_SCRIPT" &
 SERVER_PID=$!
 
@@ -52,7 +56,7 @@ for candidate in chromium chromium-browser google-chrome; do
 done
 
 if [[ -z "$CHROMIUM" ]]; then
-  echo "Chromium not found. Run scripts/setup-kiosk-display.sh" >&2
+  echo "Chromium not found. Run scripts/setup_pi.sh or scripts/setup-kiosk-display.sh" >&2
   exit 1
 fi
 
