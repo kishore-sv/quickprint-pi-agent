@@ -41,13 +41,20 @@ autologin-user-timeout=0
 user-session=openbox
 EOF
 
-quickprint_log "Disabling screen blanking (openbox autostart)"
+systemctl enable lightdm >/dev/null 2>&1 || true
+if ! systemctl is-active --quiet lightdm 2>/dev/null; then
+  quickprint_log "Starting lightdm (graphical login / kiosk session)"
+  systemctl start lightdm || quickprint_warn "Could not start lightdm — reboot may be required"
+fi
+
+quickprint_log "Configuring openbox autostart (screen blanking + kiosk display)"
 mkdir -p /etc/xdg/openbox
-cat > /etc/xdg/openbox/autostart <<'EOF'
+cat > /etc/xdg/openbox/autostart <<EOF
 xset s off
 xset -dpms
 xset s noblank
 unclutter -idle 0.5 -root &
+${REPO_DIR}/scripts/openbox-kiosk-autostart.sh &
 EOF
 
 if [[ ! -f "$DISPLAY_ENV_FILE" ]]; then
@@ -71,7 +78,11 @@ fi
 
 chmod +x "${INSTALL_ROOT}/scripts/run-kiosk-display.sh" \
   "${INSTALL_ROOT}/scripts/kiosk-display-boot.sh" \
-  "${INSTALL_ROOT}/scripts/kiosk-display-server.py"
+  "${INSTALL_ROOT}/scripts/kiosk-display-server.py" \
+  "${INSTALL_ROOT}/scripts/openbox-kiosk-autostart.sh" \
+  "${INSTALL_ROOT}/scripts/wait-for-x-display.sh" \
+  "${INSTALL_ROOT}/scripts/start-agent.sh" \
+  "${INSTALL_ROOT}/scripts/check-agent-config.sh"
 
 if [[ "$SKIP_DISPLAY_SYSTEMD" != "1" ]]; then
   quickprint_log "Installing quickprint-display systemd unit"

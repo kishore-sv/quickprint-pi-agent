@@ -1,7 +1,8 @@
 [Unit]
 Description=QuickPrint Kiosk Display (Chromium)
-After=network-online.target graphical.target quickprint-agent.service
-Wants=network-online.target
+After=network-online.target lightdm.service
+Wants=network-online.target lightdm.service
+# Prefer openbox autostart when logged in; this unit is a fallback after lightdm.
 
 [Service]
 Type=simple
@@ -10,9 +11,10 @@ Group=@SERVICE_USER@
 EnvironmentFile=@REPO_DIR@/.env.display
 Environment=INSTALL_ROOT=@REPO_DIR@
 Environment=SERVICE_USER_HOME=@SERVICE_USER_HOME@
+Environment=DISPLAY=:0
 ExecStart=@REPO_DIR@/scripts/run-kiosk-display.sh
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

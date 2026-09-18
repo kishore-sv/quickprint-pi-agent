@@ -154,7 +154,7 @@ BACKEND_WS_URL=${BACKEND_WS_URL}
 JOB_DIRECTORY=jobs
 DATABASE_PATH=data/agent.db
 PRINTER_MODE=${PRINTER_MODE}
-CUPS_PRINTER_NAME=${CUPS_PRINTER_NAME}
+CUPS_PRINTER_NAME=${CUPS_PRINTER_NAME:-quickprint-test}
 CUPS_SERVER=
 LOG_LEVEL=INFO
 MAX_DOWNLOAD_BYTES=52428800
@@ -215,8 +215,9 @@ install_systemd_units() {
     /etc/systemd/system/quickprint-display.service
   systemctl daemon-reload
   systemctl enable quickprint-agent.service
-  systemctl enable quickprint-display.service
-  record_ok "Systemd units installed and enabled"
+  # Display runs from openbox autostart after lightdm login (see setup-kiosk-display.sh).
+  # Unit is installed for optional manual use: systemctl start quickprint-display
+  record_ok "Systemd units installed (agent enabled; display via openbox autostart)"
 }
 
 setup_display_stack() {
@@ -242,6 +243,10 @@ agent_config_ready() {
   fi
   if [[ "$mode" == "cups" ]] && [[ -z "$printer" ]]; then
     record_action "Set CUPS_PRINTER_NAME in ${REPO_DIR}/.env after adding a CUPS printer queue"
+    return 1
+  fi
+  if [[ "$mode" == "cups" ]] && [[ -n "$printer" ]] && ! lpstat -p "$printer" >/dev/null 2>&1; then
+    record_action "CUPS queue '${printer}' not found — run: sudo ${REPO_DIR}/scripts/setup-cups-test-printer.sh"
     return 1
   fi
   return 0
@@ -274,12 +279,13 @@ start_services() {
   fi
 
   if display_config_ready; then
-    systemctl restart quickprint-display.service || systemctl start quickprint-display.service
-    if systemctl is-active --quiet quickprint-display.service; then
-      record_ok "quickprint-display running"
+    systemctl stop quickprint-display.service 2>/dev/null || true
+    if systemctl is-active --quiet lightdm 2>/dev/null; then
+      record_ok "Kiosk display will start via openbox autostart (lightdm active)"
     else
-      record_fail "quickprint-display not running (check journalctl -u quickprint-display -n 50)"
+      record_action "Reboot or start lightdm (sudo systemctl start lightdm) for kiosk display"
     fi
+    record_action "Display uses openbox autostart, not quickprint-display.service (avoids Missing X server errors)"
   else
     systemctl stop quickprint-display.service 2>/dev/null || true
     record_action "quickprint-display left stopped until ${REPO_DIR}/.env.display is configured"
@@ -319,10 +325,16 @@ validate_installation() {
     record_fail "quickprint-agent not enabled"
   fi
 
-  if systemctl is-enabled --quiet quickprint-display.service 2>/dev/null; then
-    record_ok "quickprint-display enabled"
+  if systemctl is-enabled --quiet quickprint-agent.service 2>/dev/null; then
+    record_ok "quickprint-agent enabled"
   else
-    record_fail "quickprint-display not enabled"
+    record_fail "quickprint-agent not enabled"
+  fi
+
+  if systemctl is-active --quiet lightdm 2>/dev/null; then
+    record_ok "lightdm running (kiosk display session)"
+  else
+    record_action "Start graphical session: sudo systemctl enable --now lightdm (or reboot)"
   fi
 }
 

@@ -219,6 +219,50 @@ After setup and reboot:
 
 ---
 
+## Troubleshooting
+
+### Agent crash loop: `CUPS_PRINTER_NAME is required when PRINTER_MODE=cups`
+
+Your `.env` has `PRINTER_MODE=cups` but no CUPS queue is configured.
+
+**Fix:**
+
+```bash
+# Option A — test queue (no physical printer)
+cd /opt/quickprint-pi-agent   # or your clone path
+sudo ./scripts/setup-cups-test-printer.sh
+sudo nano .env
+# Set: CUPS_PRINTER_NAME=quickprint-test
+sudo systemctl restart quickprint-agent
+```
+
+**Option B — physical printer:** add the queue in CUPS (`lpstat -p`), then set `CUPS_PRINTER_NAME=<queue-name>` in `.env`.
+
+After updating the repo, `start-agent.sh` keeps the service idle (no crash loop) until `.env` is valid.
+
+### Display crash loop: `Missing X server or $DISPLAY`
+
+The kiosk browser must run **inside the graphical session** (lightdm + openbox), not before X starts.
+
+**Fix:**
+
+```bash
+sudo systemctl stop quickprint-display    # do not use this service for normal kiosk
+sudo systemctl enable --now lightdm
+sudo reboot
+```
+
+Display starts from **openbox autostart** after autologin. Do not rely on `quickprint-display.service` for production kiosk (it can start before X exists).
+
+Verify after reboot:
+
+```bash
+systemctl is-active lightdm
+ls /tmp/.X11-unix/
+```
+
+---
+
 ## Security notes
 
 - Never commit `.env` or `.env.display`

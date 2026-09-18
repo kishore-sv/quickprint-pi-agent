@@ -11,7 +11,7 @@ Group=@SERVICE_USER@
 SupplementaryGroups=lp
 WorkingDirectory=@REPO_DIR@
 EnvironmentFile=@REPO_DIR@/.env
-ExecStart=@REPO_DIR@/.venv/bin/python -m app.main
+ExecStart=@REPO_DIR@/scripts/start-agent.sh
 Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal

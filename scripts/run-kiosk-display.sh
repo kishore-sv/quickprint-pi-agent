@@ -11,7 +11,10 @@ fi
 
 SERVICE_USER_HOME="${SERVICE_USER_HOME:-/home/quickprint}"
 export DISPLAY="${DISPLAY:-:0}"
-export XAUTHORITY="${XAUTHORITY:-${SERVICE_USER_HOME}/.Xauthority}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=wait-for-x-display.sh
+source "${SCRIPT_DIR}/wait-for-x-display.sh"
 
 PROFILE_DIR="${INSTALL_ROOT}/var/chromium-kiosk"
 BOOTSTRAP_URL="http://127.0.0.1:18765/"
