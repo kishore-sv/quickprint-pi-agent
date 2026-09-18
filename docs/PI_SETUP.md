@@ -221,6 +221,25 @@ After setup and reboot:
 
 ## Troubleshooting
 
+### Test queue fails: `File device URIs have been disabled`
+
+Modern CUPS disables file backends until `FileDevice Yes` is set in `/etc/cups/cups-files.conf`.
+
+**Fix (updated script does this automatically):**
+
+```bash
+sudo ./scripts/setup-cups-test-printer.sh
+lpstat -p quickprint-test
+```
+
+The script enables `FileDevice Yes`, restarts CUPS, creates the queue, and verifies with `lpstat`.
+
+Then:
+
+```bash
+sudo systemctl restart quickprint-agent
+```
+
 ### Agent crash loop: `CUPS_PRINTER_NAME is required when PRINTER_MODE=cups`
 
 Your `.env` has `PRINTER_MODE=cups` but no CUPS queue is configured.

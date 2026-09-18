@@ -227,6 +227,29 @@ setup_display_stack() {
     bash "${SCRIPT_DIR}/setup-kiosk-display.sh"
 }
 
+maybe_setup_test_printer() {
+  local env_file="${REPO_DIR}/.env"
+  local mode printer
+  mode="$(quickprint_read_env_value "$env_file" PRINTER_MODE || true)"
+  [[ "$mode" == "cups" ]] || return 0
+
+  printer="$(quickprint_read_env_value "$env_file" CUPS_PRINTER_NAME || true)"
+  [[ -n "$printer" ]] || printer="quickprint-test"
+
+  if lpstat -p "$printer" >/dev/null 2>&1; then
+    quickprint_log "CUPS queue ${printer} already exists"
+    return 0
+  fi
+
+  if [[ "$printer" != "quickprint-test" ]] && [[ "${SETUP_TEST_PRINTER:-0}" != "1" ]]; then
+    quickprint_log "CUPS queue ${printer} missing — add printer manually or set SETUP_TEST_PRINTER=1"
+    return 0
+  fi
+
+  quickprint_log "Creating CUPS test queue ${printer} (enables FileDevice if needed)"
+  CUPS_TEST_QUEUE="$printer" bash "${SCRIPT_DIR}/setup-cups-test-printer.sh"
+}
+
 agent_config_ready() {
   local env_file="${REPO_DIR}/.env"
   local id secret ws printer
@@ -455,6 +478,7 @@ main() {
   write_agent_env
   write_display_env
   setup_cups_permissions
+  maybe_setup_test_printer
   install_systemd_units
   setup_display_stack
   start_services
