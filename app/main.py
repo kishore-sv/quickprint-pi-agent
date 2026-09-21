@@ -23,6 +23,7 @@ log = get_logger("main")
 
 class _HealthHolder:
     last_health = None
+    last_telemetry = None
 
 
 async def _log_cups_startup(printer, settings) -> None:
@@ -80,6 +81,7 @@ async def _health_refresh_loop(
                 job_manager=job_manager,
                 printer_mode=settings.printer_mode,
                 cups_printer_name=settings.cups_printer_name or None,
+                telemetry_snapshot=health_holder.last_telemetry,
             )
         except Exception:
             log.warning("Health refresh failed")
@@ -133,6 +135,35 @@ async def _run() -> None:
     await job_manager.recover_unfinished_jobs()
     ws_client.start()
 
+    telemetry_service = None
+    if settings.printer_telemetry_enabled:
+        from app.printer_telemetry.monitor import MockPrinterMonitor, PrinterMonitor
+        from app.printer_telemetry.service import PrinterTelemetryService
+
+        if settings.printer_mode == "mock":
+            monitor = MockPrinterMonitor(
+                printer_name=settings.cups_printer_name or "mock-printer"
+            )
+        else:
+            monitor = PrinterMonitor(
+                settings.cups_printer_name,
+                command_timeout_seconds=settings.cups_command_timeout_seconds,
+                cups_server=settings.cups_server or None,
+                hplip_enabled=settings.printer_hplip_fallback_enabled,
+                job_printing_hint=job_manager.has_active_print_job,
+                active_job_id_provider=job_manager.current_job_id,
+            )
+        telemetry_service = PrinterTelemetryService(
+            monitor,
+            ws_client,
+            settings.agent_id or "dev",
+            poll_interval_seconds=settings.printer_telemetry_interval_seconds,
+            heartbeat_seconds=settings.printer_telemetry_heartbeat_seconds,
+            on_snapshot=lambda snap: setattr(health_holder, "last_telemetry", snap),
+        )
+        ws_client.set_telemetry_service(telemetry_service)
+        telemetry_service.start()
+
     health_holder.last_health = await collect_health(
         settings.job_directory.parent,
         printer,
@@ -140,6 +171,7 @@ async def _run() -> None:
         job_manager=job_manager,
         printer_mode=settings.printer_mode,
         cups_printer_name=settings.cups_printer_name or None,
+        telemetry_snapshot=health_holder.last_telemetry,
     )
     snap = health_holder.last_health
     log.info(
@@ -174,6 +206,8 @@ async def _run() -> None:
     health_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await health_task
+    if telemetry_service is not None:
+        await telemetry_service.stop()
     await ws_client.stop()
     await job_manager.stop()
     db.close()

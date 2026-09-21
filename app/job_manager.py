@@ -677,3 +677,11 @@ class JobManager:
         if not jobs:
             return None
         return jobs[0].backend_job_id
+
+    def has_active_print_job(self) -> bool:
+        from app.models import JobStatus
+
+        for rec in self._db.list_non_terminal_jobs():
+            if rec.status in (JobStatus.PRINTING, JobStatus.SUBMITTED) and rec.cups_job_id:
+                return True
+        return False

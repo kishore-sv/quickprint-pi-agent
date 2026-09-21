@@ -106,6 +106,7 @@ async def collect_health(
     job_manager: JobManager | None = None,
     printer_mode: str = "mock",
     cups_printer_name: str | None = None,
+    telemetry_snapshot: object | None = None,
 ) -> HealthSnapshot:
     printer_ok = False
     printer_available = False
@@ -115,9 +116,28 @@ async def collect_health(
     cups_scheduler_running: bool | None = None
     message_parts: list[str] = []
 
+    telemetry_used = False
+    if telemetry_snapshot is not None:
+        try:
+            from app.printer_telemetry.types import ConnectionState as TConn
+            from app.printer_telemetry.types import DisplayState as TDisp
+
+            conn = getattr(telemetry_snapshot, "connection_state", None)
+            disp = getattr(telemetry_snapshot, "display_state", None)
+            if conn is not None and disp is not None:
+                printer_ok = conn == TConn.ONLINE and disp in (
+                    TDisp.READY,
+                    TDisp.PRINTING,
+                )
+                printer_available = conn == TConn.ONLINE
+                telemetry_used = True
+        except Exception:
+            telemetry_used = False
+
     try:
-        printer_ok = await printer.health_check()
-        printer_available = await printer.is_available()
+        if not telemetry_used:
+            printer_ok = await printer.health_check()
+            printer_available = await printer.is_available()
         info = await printer.get_printer_info()
         if printer_mode == "cups":
             cups_available = bool(info.get("cups_scheduler_running"))

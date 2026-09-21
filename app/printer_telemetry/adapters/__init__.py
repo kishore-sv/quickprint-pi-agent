@@ -1,0 +1,1 @@
+"""Printer telemetry adapters."""

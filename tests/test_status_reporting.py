@@ -19,7 +19,7 @@ from app.mock_printer import MockPrinter
 from app.models import AssignedJob, JobStatus, PrintSettings
 from app.protocol import OutboundType, status_message_for_job_status
 from app.websocket_client import ConnectionState, WebSocketClient
-from tests.conftest import make_job_manager
+from tests.conftest import TELEMETRY_SETTINGS_KWARGS, make_job_manager
 
 
 class StatusCapture:
@@ -67,6 +67,7 @@ def _make_settings(tmp_path: Path, dirs: dict[str, Path]) -> Settings:
         retry_max_delay_seconds=0.05,
         cups_command_timeout_seconds=30.0,
         job_poll_interval_seconds=0.01,
+        **TELEMETRY_SETTINGS_KWARGS,
     )
 
 

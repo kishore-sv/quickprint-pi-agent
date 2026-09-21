@@ -64,6 +64,10 @@ async def test_reconnect_backoff_increases(tmp_path):
         retry_max_delay_seconds=30.0,
         cups_command_timeout_seconds=30.0,
         job_poll_interval_seconds=1.0,
+        printer_telemetry_enabled=False,
+        printer_telemetry_interval_seconds=3.0,
+        printer_telemetry_heartbeat_seconds=10.0,
+        printer_hplip_fallback_enabled=True,
     )
     client = WebSocketClient(settings, jm)
     delay = 1.0

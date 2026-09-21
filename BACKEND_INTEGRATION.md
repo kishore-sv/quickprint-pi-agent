@@ -34,7 +34,11 @@ Do not use the kiosk QR `public_token` as `AGENT_TOKEN`.
 Matches `app/protocol.py`:
 
 - Inbound: `job.assigned`, `job.cancel`, `ping`
-- Outbound: `job.received`, `job.downloading`, `job.ready`, `job.submitted`, `job.printing`, `job.completed`, `job.failed`, `agent.heartbeat`, `pong`
+- Outbound: `job.received`, `job.downloading`, `job.ready`, `job.submitted`, `job.printing`, `job.completed`, `job.failed`, `agent.heartbeat`, `printer.telemetry`, `pong`
+
+### `printer.telemetry`
+
+Normalized printer state (separate from print-job lifecycle). Fields include `event_id`, `sequence`, `connection_state`, `operational_state`, `display_state`, `reasons`, `raw_reasons`, `capabilities`, `last_probe_at`, `is_heartbeat`. Backend rejects out-of-order `sequence` values per kiosk.
 
 ### Status event fields
 

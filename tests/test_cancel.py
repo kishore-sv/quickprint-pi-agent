@@ -9,7 +9,7 @@ from app.downloader import Downloader
 from app.job_manager import JobManager
 from app.models import AssignedJob, JobStatus, PrintSettings
 from app.mock_printer import MockPrinter
-from tests.conftest import make_job_manager
+from tests.conftest import TELEMETRY_SETTINGS_KWARGS, make_job_manager
 
 
 @pytest.mark.asyncio
@@ -103,6 +103,7 @@ async def test_websocket_cancel_message(db, tmp_job_dirs):
         retry_max_delay_seconds=30.0,
         cups_command_timeout_seconds=30.0,
         job_poll_interval_seconds=0.01,
+        **TELEMETRY_SETTINGS_KWARGS,
     )
     jm = make_job_manager(db, tmp_job_dirs)
     client = WebSocketClient(settings, jm)

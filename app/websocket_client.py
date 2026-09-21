@@ -21,6 +21,7 @@ from app.protocol import (
     cancel_job_id_from_message,
     build_heartbeat,
     build_outbound,
+    build_printer_telemetry,
     parse_message,
     status_message_for_job_status,
 )
@@ -54,10 +55,60 @@ class WebSocketClient:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._pending_statuses: dict[str, tuple[JobStatus, dict[str, Any]]] = {}
+        self._pending_telemetry: list[tuple[dict[str, Any], bool]] = []
+        self._telemetry_service: object | None = None
 
     @property
     def state(self) -> ConnectionState:
         return self._state
+
+    def set_telemetry_service(self, service: object | None) -> None:
+        self._telemetry_service = service
+
+    async def send_telemetry(
+        self, payload: dict[str, Any], *, is_heartbeat: bool = False
+    ) -> None:
+        if self._ws is None or self._state != ConnectionState.CONNECTED:
+            self._queue_pending_telemetry(payload, is_heartbeat)
+            return
+        try:
+            await self._ws.send(build_printer_telemetry(**payload))
+        except Exception:
+            log.warning("Failed to send printer.telemetry")
+            self._queue_pending_telemetry(payload, is_heartbeat)
+
+    def _queue_pending_telemetry(
+        self, payload: dict[str, Any], is_heartbeat: bool
+    ) -> None:
+        if is_heartbeat and self._pending_telemetry:
+            return
+        self._pending_telemetry.append((payload, is_heartbeat))
+        while len(self._pending_telemetry) > 20:
+            dropped = self._pending_telemetry.pop(0)
+            if dropped[1]:
+                continue
+            break
+
+    async def _flush_pending_telemetry(self) -> None:
+        if not self._pending_telemetry or self._ws is None:
+            if self._telemetry_service is not None and hasattr(
+                self._telemetry_service, "flush_on_reconnect"
+            ):
+                await self._telemetry_service.flush_on_reconnect()
+            return
+        pending = list(self._pending_telemetry)
+        self._pending_telemetry.clear()
+        for payload, _hb in pending:
+            try:
+                await self._ws.send(build_printer_telemetry(**payload))
+            except Exception:
+                log.warning("Failed to flush pending printer.telemetry")
+                self._pending_telemetry.append((payload, _hb))
+                break
+        if self._telemetry_service is not None and hasattr(
+            self._telemetry_service, "flush_on_reconnect"
+        ):
+            await self._telemetry_service.flush_on_reconnect()
 
     def _build_status_message(
         self,
@@ -196,6 +247,7 @@ class WebSocketClient:
             log.info("WebSocket connected")
             await self._job_manager.reconcile_backend_status()
             await self._flush_pending_statuses()
+            await self._flush_pending_telemetry()
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             try:
                 async for raw in ws:

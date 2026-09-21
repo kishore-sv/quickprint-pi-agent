@@ -13,6 +13,13 @@ from app.downloader import Downloader
 from app.job_manager import JobManager
 from app.mock_printer import MockPrinter
 
+TELEMETRY_SETTINGS_KWARGS = {
+    "printer_telemetry_enabled": False,
+    "printer_telemetry_interval_seconds": 3.0,
+    "printer_telemetry_heartbeat_seconds": 10.0,
+    "printer_hplip_fallback_enabled": True,
+}
+
 
 class _FileHandler(BaseHTTPRequestHandler):
     file_bytes: bytes = b"%PDF-1.4 test"

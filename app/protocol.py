@@ -27,6 +27,7 @@ class OutboundType(str, Enum):
     JOB_COMPLETED = "job.completed"
     JOB_FAILED = "job.failed"
     AGENT_HEARTBEAT = "agent.heartbeat"
+    PRINTER_TELEMETRY = "printer.telemetry"
     PONG = "pong"
 
 
@@ -153,3 +154,9 @@ def build_heartbeat(agent_id: str, health: dict[str, Any] | None = None) -> str:
     if health:
         fields["health"] = health
     return build_outbound(OutboundType.AGENT_HEARTBEAT, **fields)
+
+
+def build_printer_telemetry(**fields: Any) -> str:
+    body: dict[str, Any] = {"type": OutboundType.PRINTER_TELEMETRY.value}
+    body.update(fields)
+    return json.dumps(body)

@@ -89,6 +89,10 @@ class Settings:
     retry_max_delay_seconds: float
     cups_command_timeout_seconds: float
     job_poll_interval_seconds: float
+    printer_telemetry_enabled: bool
+    printer_telemetry_interval_seconds: float
+    printer_telemetry_heartbeat_seconds: float
+    printer_hplip_fallback_enabled: bool
 
     @property
     def is_development(self) -> bool:
@@ -160,6 +164,19 @@ def load_settings() -> Settings:
         retry_max_delay_seconds=_env_float("RETRY_MAX_DELAY_SECONDS", 30.0),
         cups_command_timeout_seconds=_env_float("CUPS_COMMAND_TIMEOUT_SECONDS", 30.0),
         job_poll_interval_seconds=_env_float("JOB_POLL_INTERVAL_SECONDS", 1.0),
+        printer_telemetry_enabled=_env_bool(
+            "PRINTER_TELEMETRY_ENABLED",
+            _env("PRINTER_MODE", "mock").lower() == "cups",
+        ),
+        printer_telemetry_interval_seconds=_env_float(
+            "PRINTER_TELEMETRY_INTERVAL_SECONDS", 3.0
+        ),
+        printer_telemetry_heartbeat_seconds=_env_float(
+            "PRINTER_TELEMETRY_HEARTBEAT_SECONDS", 10.0
+        ),
+        printer_hplip_fallback_enabled=_env_bool(
+            "PRINTER_HPLIP_FALLBACK_ENABLED", True
+        ),
     )
 
     _validate_settings(settings)
