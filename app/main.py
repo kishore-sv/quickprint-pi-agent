@@ -145,6 +145,11 @@ async def _run() -> None:
         if settings.printer_mode == "cups"
         else None,
         before_job_completed=_publish_printer_before_job_complete,
+        physical_completion_stable_seconds=(
+            settings.physical_completion_stable_seconds
+            if settings.printer_mode == "cups"
+            else 0.0
+        ),
     )
     ws_client = WebSocketClient(settings, job_manager, health_provider=health_holder)
 

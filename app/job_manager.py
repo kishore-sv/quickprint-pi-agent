@@ -7,6 +7,7 @@ import json
 import shutil
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,17 @@ PhysicalCompletionChecker = Callable[[str], Awaitable[tuple[bool, str]]]
 BeforeJobCompletedCallback = Callable[[], Awaitable[None]]
 
 
+@dataclass
+class _PhysicalCompletionSettling:
+    """In-memory settling state after CUPS job COMPLETED (not persisted)."""
+
+    backend_job_id: str
+    printer_job_id: str
+    stable_since: float | None = None
+    start_logged: bool = False
+    last_settling_log_second: int = -1
+
+
 class JobManager:
     def __init__(
         self,
@@ -57,6 +69,7 @@ class JobManager:
         retry_policy: RetryPolicy | None = None,
         physical_completion_checker: PhysicalCompletionChecker | None = None,
         before_job_completed: BeforeJobCompletedCallback | None = None,
+        physical_completion_stable_seconds: float = 5.0,
     ) -> None:
         self._db = db
         self._downloader = downloader
@@ -73,6 +86,10 @@ class JobManager:
         self._shutdown = False
         self._physical_completion_checker = physical_completion_checker
         self._before_job_completed = before_job_completed
+        self._physical_completion_stable_seconds = max(
+            0.0, float(physical_completion_stable_seconds)
+        )
+        self._physical_completion_settling: _PhysicalCompletionSettling | None = None
         self._completion_wait_logged = False
         self._last_cups_completion_wait_reason: str | None = None
 
@@ -565,6 +582,9 @@ class JobManager:
             return False
 
         if status.state == PrinterJobState.PRINTING:
+            self._reset_physical_completion_settling(
+                backend_job_id, printer_job_id, printer_active_again=True
+            )
             rec = self._db.get_by_backend_id(backend_job_id)
             if rec and rec.status != JobStatus.PRINTING:
                 log.info(
@@ -580,6 +600,9 @@ class JobManager:
             return False
 
         if status.state == PrinterJobState.COMPLETED:
+            rec = self._db.get_by_backend_id(backend_job_id)
+            if rec and rec.status == JobStatus.COMPLETED:
+                return True
             ready, evidence = await self._evaluate_physical_completion(
                 backend_job_id, printer_job_id, status
             )
@@ -604,6 +627,10 @@ class JobManager:
                 evidence,
             )
             log.info(
+                "QuickPrint job completed job_id=%s",
+                backend_job_id,
+            )
+            log.info(
                 "Print completed %s",
                 job_context(
                     job_id=backend_job_id,
@@ -611,6 +638,7 @@ class JobManager:
                     event="completed",
                 ),
             )
+            self._clear_physical_completion_settling()
             if file_path is not None and file_path.is_file():
                 await self._complete_job(backend_job_id, file_path)
             else:
@@ -630,60 +658,196 @@ class JobManager:
             log.info("%s", message)
             self._last_cups_completion_wait_reason = reason
 
+    def _configured_printer_name(self) -> str:
+        name = getattr(self._printer, "_printer_name", None)
+        return str(name) if name else "unknown"
+
+    def _clear_physical_completion_settling(self) -> None:
+        self._physical_completion_settling = None
+
+    def _reset_physical_completion_settling(
+        self,
+        backend_job_id: str,
+        printer_job_id: str,
+        *,
+        printer_active_again: bool = False,
+    ) -> None:
+        pending = self._physical_completion_settling
+        if pending is None:
+            return
+        if pending.backend_job_id != backend_job_id:
+            return
+        if pending.printer_job_id != printer_job_id:
+            return
+        if printer_active_again and pending.stable_since is not None:
+            log.info(
+                "Physical printer became active again; resetting completion timer "
+                "job_id=%s",
+                backend_job_id,
+            )
+        self._physical_completion_settling = None
+
+    async def _cups_queue_quiescent(self) -> tuple[bool, str]:
+        """Queue-level non-printing check via lpstat -p (not proof of sheet exit alone)."""
+        get_flags = getattr(self._printer, "get_queue_printer_flags", None)
+        if get_flags is None:
+            return True, "no_queue_flags"
+        flags = await get_flags()
+        if not flags.get("ok"):
+            self._note_cups_completion_wait(
+                "cups_printer_state_unknown",
+                "CUPS completion waiting: printer state unknown",
+            )
+            return False, "cups_printer_state_unknown"
+        if flags.get("printing"):
+            self._note_cups_completion_wait(
+                "cups_printer_still_printing",
+                "CUPS completion waiting: printer still printing",
+            )
+            return False, "cups_printer_still_printing"
+        if not flags.get("idle"):
+            self._note_cups_completion_wait(
+                "cups_printer_not_idle",
+                "CUPS completion waiting: printer state unknown",
+            )
+            return False, "cups_printer_not_idle"
+        if self._last_cups_completion_wait_reason is not None:
+            log.info("CUPS completion gate passed: printer idle")
+        self._last_cups_completion_wait_reason = None
+        return True, "printer_idle"
+
+    async def _run_physical_completion_checker(
+        self, backend_job_id: str, printer_job_id: str
+    ) -> tuple[bool, str]:
+        if self._physical_completion_checker is None:
+            return True, "printer_idle"
+        try:
+            ready, reason = await self._physical_completion_checker(printer_job_id)
+            if not ready:
+                return False, reason
+            return True, reason
+        except Exception:
+            log.debug(
+                "physical completion checker failed job=%s",
+                backend_job_id,
+                exc_info=True,
+            )
+            return False, "physical_completion_checker_failed"
+
     async def _evaluate_physical_completion(
         self,
         backend_job_id: str,
         printer_job_id: str,
         cups_status: PrinterJobStatus,
     ) -> tuple[bool, str]:
-        """Return (ready_to_complete, evidence_or_reason)."""
+        """Return (ready_to_complete, evidence_or_reason).
+
+        CUPS may mark a job COMPLETED before all sheets have exited (e.g. HP P1106).
+        Do not treat a single idle sample as physical completion — require continuous
+        queue non-printing for PHYSICAL_COMPLETION_STABLE_SECONDS after CUPS terminal.
+        """
         recheck = await self._printer.get_status(printer_job_id)
         if recheck.state in (PrinterJobState.PRINTING, PrinterJobState.PENDING):
+            self._reset_physical_completion_settling(
+                backend_job_id, printer_job_id, printer_active_again=True
+            )
             return False, "cups_job_still_active"
         if recheck.state != PrinterJobState.COMPLETED:
+            self._reset_physical_completion_settling(backend_job_id, printer_job_id)
             return False, f"cups_recheck_{recheck.state.value}"
 
-        get_flags = getattr(self._printer, "get_queue_printer_flags", None)
-        if get_flags is not None:
-            flags = await get_flags()
-            if not flags.get("ok"):
-                self._note_cups_completion_wait(
-                    "cups_printer_state_unknown",
-                    "CUPS completion waiting: printer state unknown",
-                )
-                return False, "cups_printer_state_unknown"
-            if flags.get("printing"):
-                self._note_cups_completion_wait(
-                    "cups_printer_still_printing",
-                    "CUPS completion waiting: printer still printing",
-                )
-                return False, "cups_printer_still_printing"
-            if not flags.get("idle"):
-                self._note_cups_completion_wait(
-                    "cups_printer_not_idle",
-                    "CUPS completion waiting: printer state unknown",
-                )
-                return False, "cups_printer_not_idle"
-            if self._last_cups_completion_wait_reason is not None:
-                log.info("CUPS completion gate passed: printer idle")
-            self._last_cups_completion_wait_reason = None
+        quiescent, quiescent_reason = await self._cups_queue_quiescent()
+        if not quiescent:
+            self._reset_physical_completion_settling(
+                backend_job_id, printer_job_id, printer_active_again=True
+            )
+            return False, quiescent_reason
 
-        checker_suffix = "printer_idle"
-        if self._physical_completion_checker is not None:
-            try:
-                ready, reason = await self._physical_completion_checker(printer_job_id)
-                if not ready:
-                    return False, reason
-                checker_suffix = reason
-            except Exception:
-                log.debug(
-                    "physical completion checker failed job=%s",
-                    backend_job_id,
-                    exc_info=True,
-                )
-                return False, "physical_completion_checker_failed"
+        stable_required = self._physical_completion_stable_seconds
+        if stable_required <= 0:
+            checker_ok, checker_suffix = await self._run_physical_completion_checker(
+                backend_job_id, printer_job_id
+            )
+            if not checker_ok:
+                return False, checker_suffix
+            return True, f"cups_terminal+{checker_suffix}"
 
-        return True, f"cups_terminal+{checker_suffix}"
+        pending = self._physical_completion_settling
+        if (
+            pending is None
+            or pending.backend_job_id != backend_job_id
+            or pending.printer_job_id != printer_job_id
+        ):
+            pending = _PhysicalCompletionSettling(
+                backend_job_id=backend_job_id,
+                printer_job_id=printer_job_id,
+            )
+            self._physical_completion_settling = pending
+
+        if not pending.start_logged:
+            log.info(
+                "CUPS job completed; waiting for physical printer quiescence "
+                "job_id=%s printer=%s stable_required_seconds=%s",
+                backend_job_id,
+                self._configured_printer_name(),
+                int(stable_required)
+                if stable_required == int(stable_required)
+                else stable_required,
+            )
+            pending.start_logged = True
+
+        now = time.monotonic()
+        if pending.stable_since is None:
+            pending.stable_since = now
+
+        elapsed = now - pending.stable_since
+        elapsed_second = int(elapsed)
+        if (
+            elapsed_second > pending.last_settling_log_second
+            and elapsed < stable_required
+        ):
+            log.info(
+                "Physical completion settling job_id=%s elapsed_seconds=%s",
+                backend_job_id,
+                elapsed_second,
+            )
+            pending.last_settling_log_second = elapsed_second
+
+        if elapsed < stable_required:
+            return False, "physical_completion_settling"
+
+        recheck_final = await self._printer.get_status(printer_job_id)
+        if recheck_final.state in (PrinterJobState.PRINTING, PrinterJobState.PENDING):
+            self._reset_physical_completion_settling(
+                backend_job_id, printer_job_id, printer_active_again=True
+            )
+            return False, "cups_job_still_active"
+        if recheck_final.state != PrinterJobState.COMPLETED:
+            self._reset_physical_completion_settling(backend_job_id, printer_job_id)
+            return False, f"cups_recheck_{recheck_final.state.value}"
+
+        quiescent_final, final_reason = await self._cups_queue_quiescent()
+        if not quiescent_final:
+            self._reset_physical_completion_settling(
+                backend_job_id, printer_job_id, printer_active_again=True
+            )
+            return False, final_reason
+
+        checker_ok, checker_suffix = await self._run_physical_completion_checker(
+            backend_job_id, printer_job_id
+        )
+        if not checker_ok:
+            return False, checker_suffix
+
+        log.info(
+            "Physical completion confirmed job_id=%s stable_seconds=%s",
+            backend_job_id,
+            int(stable_required)
+            if stable_required == int(stable_required)
+            else stable_required,
+        )
+        self._clear_physical_completion_settling()
+        return True, f"cups_terminal+stable_{stable_required}s+{checker_suffix}"
 
     async def _notify_before_job_completed(self) -> None:
         if self._before_job_completed is not None:

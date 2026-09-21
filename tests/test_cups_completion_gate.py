@@ -53,6 +53,7 @@ def _jm(tmp_path: Path, printer: CupsPrinter, **kwargs) -> JobManager:
     for d in (incoming, processing, completed, failed):
         d.mkdir(parents=True, exist_ok=True)
     db = init_db(tmp_path / "agent.db")
+    stable = kwargs.pop("physical_completion_stable_seconds", 0)
     return JobManager(
         db=db,
         downloader=Downloader(incoming, 1_000_000, 5),
@@ -61,6 +62,7 @@ def _jm(tmp_path: Path, printer: CupsPrinter, **kwargs) -> JobManager:
         completed_dir=completed,
         failed_dir=failed,
         poll_interval_seconds=0.01,
+        physical_completion_stable_seconds=stable,
         **kwargs,
     )
 

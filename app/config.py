@@ -46,6 +46,22 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def physical_completion_stable_seconds_from_env(
+    default: float = 5.0,
+) -> float:
+    """PHYSICAL_COMPLETION_STABLE_SECONDS — quiescence after CUPS job COMPLETED (P1106 mitigation)."""
+    raw = os.environ.get("PHYSICAL_COMPLETION_STABLE_SECONDS")
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+    if value < 0:
+        return default
+    return value
+
+
 def _load_dotenv() -> None:
     """Load .env from project root if present (simple KEY=VALUE parser)."""
     env_path = PROJECT_ROOT / ".env"
@@ -93,6 +109,7 @@ class Settings:
     printer_telemetry_interval_seconds: float
     printer_telemetry_heartbeat_seconds: float
     printer_hplip_fallback_enabled: bool
+    physical_completion_stable_seconds: float = 5.0
 
     @property
     def is_development(self) -> bool:
@@ -176,6 +193,9 @@ def load_settings() -> Settings:
         ),
         printer_hplip_fallback_enabled=_env_bool(
             "PRINTER_HPLIP_FALLBACK_ENABLED", True
+        ),
+        physical_completion_stable_seconds=physical_completion_stable_seconds_from_env(
+            5.0
         ),
     )
 
