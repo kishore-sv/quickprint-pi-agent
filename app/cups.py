@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TypedDict
 
 from app.cups_command import (
     AsyncSubprocessCupsRunner,
@@ -30,6 +31,15 @@ from app.printer import (
 )
 
 log = get_logger("cups")
+
+
+class QueuePrinterFlags(TypedDict):
+    """Result of `lpstat -p` via parse_lpstat_printer_status. ok=False → do not treat as idle."""
+
+    ok: bool
+    idle: bool
+    printing: bool
+
 
 _REQUEST_ID_RE = re.compile(r"request id is ([^\s]+)", re.IGNORECASE)
 _LPSTAT_JOB_ID_RE = re.compile(r"^(\S+?-\d+)\s+")
@@ -137,6 +147,26 @@ class CupsPrinter(Printer):
         else:
             info["cups_scheduler_running"] = False
         return info
+
+    async def get_queue_printer_flags(self) -> QueuePrinterFlags:
+        """Current queue summary from `lpstat -p` (idle/printing). Never ok=True on probe failure."""
+        try:
+            result = await self._run("lpstat", "-p", self._printer_name)
+        except CupsCommandTimeoutError:
+            return QueuePrinterFlags(ok=False, idle=False, printing=False)
+        if result.returncode != 0:
+            return QueuePrinterFlags(ok=False, idle=False, printing=False)
+        stdout = result.stdout or ""
+        if not stdout.strip():
+            return QueuePrinterFlags(ok=False, idle=False, printing=False)
+        parsed = parse_lpstat_printer_status(stdout)
+        if not parsed.get("exists"):
+            return QueuePrinterFlags(ok=False, idle=False, printing=False)
+        return QueuePrinterFlags(
+            ok=True,
+            idle=bool(parsed.get("idle")),
+            printing=bool(parsed.get("printing")),
+        )
 
     async def find_existing_job(self, backend_job_id: str) -> ExistingJobLookup:
         try:

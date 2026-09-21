@@ -120,21 +120,10 @@ async def _run() -> None:
     health_holder = _HealthHolder()
 
     async def _physical_completion_ready(cups_job_id: str) -> tuple[bool, str]:
+        """CUPS printer idle is enforced in JobManager._evaluate_physical_completion."""
         if settings.printer_mode != "cups":
             return True, "non_cups"
-        snap = health_holder.last_telemetry
-        if snap is not None:
-            from app.printer_telemetry.types import DisplayState, OperationalState
-
-            if snap.operational_state == OperationalState.PRINTING:
-                return False, "printer_operational_printing"
-            if snap.display_state == DisplayState.PRINTING:
-                return False, "printer_display_printing"
-        if hasattr(printer, "get_printer_info"):
-            info = await printer.get_printer_info()
-            if info.get("printing"):
-                return False, "cups_printer_status_printing"
-        return True, "printer_quiescent"
+        return True, "printer_idle"
 
     telemetry_service = None
 

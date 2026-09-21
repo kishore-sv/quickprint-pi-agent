@@ -74,6 +74,7 @@ class JobManager:
         self._physical_completion_checker = physical_completion_checker
         self._before_job_completed = before_job_completed
         self._completion_wait_logged = False
+        self._last_cups_completion_wait_reason: str | None = None
 
     def set_before_job_completed(
         self, callback: BeforeJobCompletedCallback | None
@@ -595,6 +596,7 @@ class JobManager:
                     self._completion_wait_logged = True
                 return False
             self._completion_wait_logged = False
+            self._last_cups_completion_wait_reason = None
             log.info(
                 "completion_decision=COMPLETED job=%s cups_job_id=%s evidence=%s",
                 backend_job_id,
@@ -623,6 +625,11 @@ class JobManager:
 
         return False
 
+    def _note_cups_completion_wait(self, reason: str, message: str) -> None:
+        if reason != self._last_cups_completion_wait_reason:
+            log.info("%s", message)
+            self._last_cups_completion_wait_reason = reason
+
     async def _evaluate_physical_completion(
         self,
         backend_job_id: str,
@@ -636,29 +643,47 @@ class JobManager:
         if recheck.state != PrinterJobState.COMPLETED:
             return False, f"cups_recheck_{recheck.state.value}"
 
+        get_flags = getattr(self._printer, "get_queue_printer_flags", None)
+        if get_flags is not None:
+            flags = await get_flags()
+            if not flags.get("ok"):
+                self._note_cups_completion_wait(
+                    "cups_printer_state_unknown",
+                    "CUPS completion waiting: printer state unknown",
+                )
+                return False, "cups_printer_state_unknown"
+            if flags.get("printing"):
+                self._note_cups_completion_wait(
+                    "cups_printer_still_printing",
+                    "CUPS completion waiting: printer still printing",
+                )
+                return False, "cups_printer_still_printing"
+            if not flags.get("idle"):
+                self._note_cups_completion_wait(
+                    "cups_printer_not_idle",
+                    "CUPS completion waiting: printer state unknown",
+                )
+                return False, "cups_printer_not_idle"
+            if self._last_cups_completion_wait_reason is not None:
+                log.info("CUPS completion gate passed: printer idle")
+            self._last_cups_completion_wait_reason = None
+
+        checker_suffix = "printer_idle"
         if self._physical_completion_checker is not None:
             try:
                 ready, reason = await self._physical_completion_checker(printer_job_id)
                 if not ready:
                     return False, reason
-                return True, f"cups_terminal+{reason}"
+                checker_suffix = reason
             except Exception:
                 log.debug(
                     "physical completion checker failed job=%s",
                     backend_job_id,
                     exc_info=True,
                 )
+                return False, "physical_completion_checker_failed"
 
-        if hasattr(self._printer, "get_printer_info"):
-            try:
-                info = await self._printer.get_printer_info()
-                if info.get("printing"):
-                    return False, "cups_queue_printing"
-            except Exception:
-                pass
-
-        reasons = cups_status.message or recheck.message or ""
-        return True, f"cups_terminal+{reasons or 'no_physical_checker'}"
+        return True, f"cups_terminal+{checker_suffix}"
 
     async def _notify_before_job_completed(self) -> None:
         if self._before_job_completed is not None:
