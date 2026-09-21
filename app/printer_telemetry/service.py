@@ -58,12 +58,34 @@ class PrinterTelemetryService:
                 await self._task
             self._task = None
 
-    async def flush_on_reconnect(self) -> None:
-        snap = await self._monitor.collect_snapshot()
+    async def publish_physical_state(
+        self, *, force: bool = False
+    ) -> PrinterTelemetrySnapshot:
+        """Re-probe printer without job hint; publish when state changes or force."""
+        collect_physical = getattr(self._monitor, "collect_snapshot_physical", None)
+        if collect_physical is not None:
+            snap = await collect_physical()
+        else:
+            snap = await self._monitor.collect_snapshot()
+        prev = self._last_snapshot
         self._last_snapshot = snap
         if self._on_snapshot is not None:
             self._on_snapshot(snap)
-        await self._emit(snap, is_heartbeat=False, force=True)
+        changed = prev is None or snap.state_key() != prev.state_key()
+        if force or changed:
+            if prev is not None and changed:
+                log.info(
+                    "Printer telemetry physical publish: %s → %s (display %s → %s)",
+                    prev.connection_state.value,
+                    snap.connection_state.value,
+                    prev.display_state.value,
+                    snap.display_state.value,
+                )
+            await self._emit(snap, is_heartbeat=False, force=force)
+        return snap
+
+    async def flush_on_reconnect(self) -> None:
+        await self.publish_physical_state(force=True)
 
     async def _run_loop(self) -> None:
         import time

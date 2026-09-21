@@ -39,6 +39,7 @@ StateChangeCallback = Callable[
 ]
 
 PhysicalCompletionChecker = Callable[[str], Awaitable[tuple[bool, str]]]
+BeforeJobCompletedCallback = Callable[[], Awaitable[None]]
 
 
 class JobManager:
@@ -55,6 +56,7 @@ class JobManager:
         poll_interval_seconds: float = 1.0,
         retry_policy: RetryPolicy | None = None,
         physical_completion_checker: PhysicalCompletionChecker | None = None,
+        before_job_completed: BeforeJobCompletedCallback | None = None,
     ) -> None:
         self._db = db
         self._downloader = downloader
@@ -70,7 +72,13 @@ class JobManager:
         self._worker_task: asyncio.Task[None] | None = None
         self._shutdown = False
         self._physical_completion_checker = physical_completion_checker
+        self._before_job_completed = before_job_completed
         self._completion_wait_logged = False
+
+    def set_before_job_completed(
+        self, callback: BeforeJobCompletedCallback | None
+    ) -> None:
+        self._before_job_completed = callback
 
     def set_physical_completion_checker(
         self, checker: PhysicalCompletionChecker | None
@@ -609,6 +617,7 @@ class JobManager:
                 if path and path.is_file():
                     await self._complete_job(backend_job_id, path)
                 else:
+                    await self._notify_before_job_completed()
                     await self._transition(backend_job_id, JobStatus.COMPLETED)
             return True
 
@@ -651,7 +660,12 @@ class JobManager:
         reasons = cups_status.message or recheck.message or ""
         return True, f"cups_terminal+{reasons or 'no_physical_checker'}"
 
+    async def _notify_before_job_completed(self) -> None:
+        if self._before_job_completed is not None:
+            await self._before_job_completed()
+
     async def _complete_job(self, backend_job_id: str, file_path: Path) -> None:
+        await self._notify_before_job_completed()
         dest = self._completed_dir / file_path.name
         if file_path.exists():
             shutil.move(str(file_path), dest)
@@ -751,6 +765,6 @@ class JobManager:
         from app.models import JobStatus
 
         for rec in self._db.list_non_terminal_jobs():
-            if rec.status in (JobStatus.PRINTING, JobStatus.SUBMITTED) and rec.cups_job_id:
+            if rec.status == JobStatus.PRINTING and rec.cups_job_id:
                 return True
         return False

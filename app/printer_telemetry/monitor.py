@@ -39,12 +39,19 @@ class PrinterMonitor:
         self._active_job_id = active_job_id_provider or (lambda: None)
 
     async def collect_snapshot(self) -> PrinterTelemetrySnapshot:
+        return await self._collect_snapshot(use_job_hint=True)
+
+    async def collect_snapshot_physical(self) -> PrinterTelemetrySnapshot:
+        """Probe CUPS/IPP only (no QuickPrint job-row printing hint)."""
+        return await self._collect_snapshot(use_job_hint=False)
+
+    async def _collect_snapshot(self, *, use_job_hint: bool) -> PrinterTelemetrySnapshot:
         last_probe_at = utc_now_iso()
         try:
             base = AdapterProbeResult()
             merged = await self._cups.probe(base)
             merged = await self._hplip.probe(merged)
-            job_hint = self._job_printing_hint()
+            job_hint = self._job_printing_hint() if use_job_hint else False
             active_job = self._active_job_id()
             snap = normalize_probe(
                 merged,
@@ -69,6 +76,9 @@ class MockPrinterMonitor:
     ) -> None:
         self._printer_name = printer_name
         self._display = display_state
+
+    async def collect_snapshot_physical(self) -> PrinterTelemetrySnapshot:
+        return await self.collect_snapshot()
 
     async def collect_snapshot(self) -> PrinterTelemetrySnapshot:
         from app.printer_telemetry.types import (

@@ -65,6 +65,42 @@ def test_hplip_usb_present_yields_ready_when_idle():
     assert snap.display_state == DisplayState.READY
 
 
+def test_idle_cups_job_hint_false_ready():
+    probe = AdapterProbeResult(
+        queue_exists=True,
+        scheduler_running=True,
+        cups_idle=True,
+        physical_usb_present=True,
+    )
+    snap = normalize_probe(
+        probe,
+        printer_name="p1",
+        last_probe_at="2026-01-01T00:00:00Z",
+        active_job_id="job-1",
+        job_printing_hint=False,
+    )
+    assert snap.operational_state == OperationalState.IDLE
+    assert snap.display_state == DisplayState.READY
+
+
+def test_idle_cups_job_hint_true_forces_printing():
+    probe = AdapterProbeResult(
+        queue_exists=True,
+        scheduler_running=True,
+        cups_idle=True,
+        physical_usb_present=True,
+    )
+    snap = normalize_probe(
+        probe,
+        printer_name="p1",
+        last_probe_at="2026-01-01T00:00:00Z",
+        active_job_id="job-1",
+        job_printing_hint=True,
+    )
+    assert snap.operational_state == OperationalState.PRINTING
+    assert snap.display_state == DisplayState.PRINTING
+
+
 def test_processing_state_printing():
     probe = AdapterProbeResult(
         queue_exists=True,

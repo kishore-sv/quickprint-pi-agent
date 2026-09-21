@@ -136,6 +136,12 @@ async def _run() -> None:
                 return False, "cups_printer_status_printing"
         return True, "printer_quiescent"
 
+    telemetry_service = None
+
+    async def _publish_printer_before_job_complete() -> None:
+        if telemetry_service is not None:
+            await telemetry_service.publish_physical_state(force=True)
+
     job_manager = JobManager(
         db=db,
         downloader=downloader,
@@ -149,14 +155,10 @@ async def _run() -> None:
         physical_completion_checker=_physical_completion_ready
         if settings.printer_mode == "cups"
         else None,
+        before_job_completed=_publish_printer_before_job_complete,
     )
     ws_client = WebSocketClient(settings, job_manager, health_provider=health_holder)
 
-    job_manager.start()
-    await job_manager.recover_unfinished_jobs()
-    ws_client.start()
-
-    telemetry_service = None
     if settings.printer_telemetry_enabled:
         from app.printer_telemetry.monitor import MockPrinterMonitor, PrinterMonitor
         from app.printer_telemetry.service import PrinterTelemetryService
@@ -183,6 +185,12 @@ async def _run() -> None:
             on_snapshot=lambda snap: setattr(health_holder, "last_telemetry", snap),
         )
         ws_client.set_telemetry_service(telemetry_service)
+        await telemetry_service.publish_physical_state(force=True)
+
+    job_manager.start()
+    await job_manager.recover_unfinished_jobs()
+    ws_client.start()
+    if telemetry_service is not None:
         telemetry_service.start()
 
     health_holder.last_health = await collect_health(
