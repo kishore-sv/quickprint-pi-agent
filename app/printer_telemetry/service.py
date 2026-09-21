@@ -59,10 +59,11 @@ class PrinterTelemetryService:
             self._task = None
 
     async def flush_on_reconnect(self) -> None:
-        if self._last_snapshot is None:
-            snap = await self._monitor.collect_snapshot()
-            self._last_snapshot = snap
-        await self._emit(self._last_snapshot, is_heartbeat=False, force=True)
+        snap = await self._monitor.collect_snapshot()
+        self._last_snapshot = snap
+        if self._on_snapshot is not None:
+            self._on_snapshot(snap)
+        await self._emit(snap, is_heartbeat=False, force=True)
 
     async def _run_loop(self) -> None:
         import time
