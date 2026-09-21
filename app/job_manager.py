@@ -38,6 +38,8 @@ StateChangeCallback = Callable[
     [str, JobStatus, dict[str, Any]], Awaitable[None]
 ]
 
+PhysicalCompletionChecker = Callable[[str], Awaitable[tuple[bool, str]]]
+
 
 class JobManager:
     def __init__(
@@ -52,6 +54,7 @@ class JobManager:
         on_state_change: StateChangeCallback | None = None,
         poll_interval_seconds: float = 1.0,
         retry_policy: RetryPolicy | None = None,
+        physical_completion_checker: PhysicalCompletionChecker | None = None,
     ) -> None:
         self._db = db
         self._downloader = downloader
@@ -66,6 +69,13 @@ class JobManager:
         self._queue: asyncio.Queue[AssignedJob] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
         self._shutdown = False
+        self._physical_completion_checker = physical_completion_checker
+        self._completion_wait_logged = False
+
+    def set_physical_completion_checker(
+        self, checker: PhysicalCompletionChecker | None
+    ) -> None:
+        self._physical_completion_checker = checker
 
     def start(self) -> None:
         if self._incoming_dir:
@@ -561,6 +571,28 @@ class JobManager:
             return False
 
         if status.state == PrinterJobState.COMPLETED:
+            ready, evidence = await self._evaluate_physical_completion(
+                backend_job_id, printer_job_id, status
+            )
+            if not ready:
+                if not self._completion_wait_logged:
+                    log.info(
+                        "completion_decision=WAITING job=%s cups_job_id=%s "
+                        "cups_job_state=%s reason=%s",
+                        backend_job_id,
+                        printer_job_id,
+                        status.state.value,
+                        evidence,
+                    )
+                    self._completion_wait_logged = True
+                return False
+            self._completion_wait_logged = False
+            log.info(
+                "completion_decision=COMPLETED job=%s cups_job_id=%s evidence=%s",
+                backend_job_id,
+                printer_job_id,
+                evidence,
+            )
             log.info(
                 "Print completed %s",
                 job_context(
@@ -581,6 +613,43 @@ class JobManager:
             return True
 
         return False
+
+    async def _evaluate_physical_completion(
+        self,
+        backend_job_id: str,
+        printer_job_id: str,
+        cups_status: PrinterJobStatus,
+    ) -> tuple[bool, str]:
+        """Return (ready_to_complete, evidence_or_reason)."""
+        recheck = await self._printer.get_status(printer_job_id)
+        if recheck.state in (PrinterJobState.PRINTING, PrinterJobState.PENDING):
+            return False, "cups_job_still_active"
+        if recheck.state != PrinterJobState.COMPLETED:
+            return False, f"cups_recheck_{recheck.state.value}"
+
+        if self._physical_completion_checker is not None:
+            try:
+                ready, reason = await self._physical_completion_checker(printer_job_id)
+                if not ready:
+                    return False, reason
+                return True, f"cups_terminal+{reason}"
+            except Exception:
+                log.debug(
+                    "physical completion checker failed job=%s",
+                    backend_job_id,
+                    exc_info=True,
+                )
+
+        if hasattr(self._printer, "get_printer_info"):
+            try:
+                info = await self._printer.get_printer_info()
+                if info.get("printing"):
+                    return False, "cups_queue_printing"
+            except Exception:
+                pass
+
+        reasons = cups_status.message or recheck.message or ""
+        return True, f"cups_terminal+{reasons or 'no_physical_checker'}"
 
     async def _complete_job(self, backend_job_id: str, file_path: Path) -> None:
         dest = self._completed_dir / file_path.name

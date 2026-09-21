@@ -12,6 +12,7 @@ from app.cups_command import (
     CupsCommandTimeoutError,
 )
 from app.cups_discovery import parse_lpstat_printer_status
+from app.cups_job_state import parse_lpstat_long_job, parse_lpstat_short_job_line
 from app.cups_job_identity import cups_job_title, lpstat_text_contains_exact_title
 from app.cups_options import build_lp_argv
 from app.logger import get_logger, job_context
@@ -34,18 +35,14 @@ _REQUEST_ID_RE = re.compile(r"request id is ([^\s]+)", re.IGNORECASE)
 _LPSTAT_JOB_ID_RE = re.compile(r"^(\S+?-\d+)\s+")
 
 
-def _parse_job_state(stdout: str, stderr: str) -> PrinterJobState:
-    text = (stdout + stderr).lower()
-    if "completed" in text:
-        return PrinterJobState.COMPLETED
-    if "canceled" in text or "cancelled" in text:
+def _parse_job_state(line: str, stderr: str) -> PrinterJobState:
+    """Parse job state from an lpstat queue listing line (not stderr)."""
+    state = parse_lpstat_short_job_line(line)
+    if state != PrinterJobState.UNKNOWN:
+        return state
+    err = stderr.lower()
+    if "canceled" in err or "cancelled" in err:
         return PrinterJobState.CANCELLED
-    if "aborted" in text:
-        return PrinterJobState.FAILED
-    if "processing" in text or "printing" in text:
-        return PrinterJobState.PRINTING
-    if "pending" in text or "held" in text or "queued" in text:
-        return PrinterJobState.PENDING
     return PrinterJobState.UNKNOWN
 
 
@@ -286,47 +283,125 @@ class CupsPrinter(Printer):
         )
         return SubmitResult(printer_job_id=cups_job_id)
 
+    async def _job_still_on_active_queue(self, printer_job_id: str) -> bool:
+        list_args = _lpstat_queue_list_args(self._printer_name, which="not-completed")
+        try:
+            result = await self._run(*list_args)
+        except CupsCommandTimeoutError:
+            return True
+        if result.returncode != 0:
+            return True
+        return _job_line_from_lpstat_listing(result.stdout, printer_job_id) is not None
+
+    async def _job_detail_state(self, printer_job_id: str) -> PrinterJobStatus | None:
+        try:
+            detail = await self._run("lpstat", "-l", "-o", printer_job_id)
+        except CupsCommandTimeoutError as e:
+            return PrinterJobStatus(
+                printer_job_id=printer_job_id,
+                state=PrinterJobState.UNKNOWN,
+                message=str(e),
+            )
+        if detail.returncode != 0:
+            return None
+        ipp_state, reasons = parse_lpstat_long_job(detail.stdout)
+        if ipp_state is None:
+            return None
+        msg = f"job-state-reasons={','.join(reasons)}" if reasons else None
+        return PrinterJobStatus(
+            printer_job_id=printer_job_id, state=ipp_state, message=msg
+        )
+
     async def get_status(self, printer_job_id: str) -> PrinterJobStatus:
         last_err = ""
+        active_line: str | None = None
 
-        for which in ("not-completed", "completed"):
-            list_args = _lpstat_queue_list_args(self._printer_name, which=which)
-            try:
-                result = await self._run(*list_args)
-            except CupsCommandTimeoutError as e:
+        list_args = _lpstat_queue_list_args(self._printer_name, which="not-completed")
+        try:
+            active_result = await self._run(*list_args)
+        except CupsCommandTimeoutError as e:
+            return PrinterJobStatus(
+                printer_job_id=printer_job_id,
+                state=PrinterJobState.UNKNOWN,
+                message=str(e),
+            )
+
+        if active_result.returncode == 0:
+            active_line = _job_line_from_lpstat_listing(
+                active_result.stdout, printer_job_id
+            )
+            if active_line:
+                detail_status = await self._job_detail_state(printer_job_id)
+                if detail_status and detail_status.state != PrinterJobState.UNKNOWN:
+                    log.debug(
+                        "CUPS status (ipp) %s",
+                        job_context(
+                            cups_job_id=printer_job_id,
+                            status=detail_status.state.value,
+                        ),
+                    )
+                    return detail_status
+                state = _parse_job_state(active_line, active_result.stderr)
+                log.debug(
+                    "CUPS status (active) %s",
+                    job_context(cups_job_id=printer_job_id, status=state.value),
+                )
                 return PrinterJobStatus(
                     printer_job_id=printer_job_id,
-                    state=PrinterJobState.UNKNOWN,
-                    message=str(e),
+                    state=state,
+                    message=active_line.strip()[:200],
                 )
+        else:
+            last_err = active_result.stderr.strip() or active_result.stdout.strip()
 
-            if result.returncode != 0:
-                last_err = result.stderr.strip() or result.stdout.strip()
-                continue
+        completed_args = _lpstat_queue_list_args(self._printer_name, which="completed")
+        try:
+            completed_result = await self._run(*completed_args)
+        except CupsCommandTimeoutError as e:
+            return PrinterJobStatus(
+                printer_job_id=printer_job_id,
+                state=PrinterJobState.UNKNOWN,
+                message=str(e),
+            )
 
-            line = _job_line_from_lpstat_listing(result.stdout, printer_job_id)
-            if not line:
-                continue
-
-            if which == "completed":
+        if completed_result.returncode == 0:
+            completed_line = _job_line_from_lpstat_listing(
+                completed_result.stdout, printer_job_id
+            )
+            if completed_line:
+                if await self._job_still_on_active_queue(printer_job_id):
+                    log.debug(
+                        "CUPS job in completed list but still active %s",
+                        job_context(cups_job_id=printer_job_id),
+                    )
+                    detail_status = await self._job_detail_state(printer_job_id)
+                    if detail_status and detail_status.state in (
+                        PrinterJobState.PRINTING,
+                        PrinterJobState.PENDING,
+                    ):
+                        return detail_status
+                    return PrinterJobStatus(
+                        printer_job_id=printer_job_id,
+                        state=PrinterJobState.PRINTING,
+                        message="job on active and completed queues",
+                    )
+                detail_status = await self._job_detail_state(printer_job_id)
+                if detail_status and detail_status.state != PrinterJobState.COMPLETED:
+                    return detail_status
                 log.debug(
                     "CUPS status %s",
                     job_context(
-                        cups_job_id=printer_job_id, status=PrinterJobState.COMPLETED.value
+                        cups_job_id=printer_job_id,
+                        status=PrinterJobState.COMPLETED.value,
                     ),
                 )
                 return PrinterJobStatus(
                     printer_job_id=printer_job_id,
                     state=PrinterJobState.COMPLETED,
-                    message="CUPS job completed",
+                    message="CUPS job in completed queue",
                 )
-
-            state = _parse_job_state(line, result.stderr)
-            log.debug(
-                "CUPS status %s",
-                job_context(cups_job_id=printer_job_id, status=state.value),
-            )
-            return PrinterJobStatus(printer_job_id=printer_job_id, state=state)
+        elif not last_err:
+            last_err = completed_result.stderr.strip() or completed_result.stdout.strip()
 
         return PrinterJobStatus(
             printer_job_id=printer_job_id,

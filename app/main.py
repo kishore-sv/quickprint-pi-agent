@@ -117,6 +117,25 @@ async def _run() -> None:
         max_delay_seconds=settings.retry_max_delay_seconds,
     )
 
+    health_holder = _HealthHolder()
+
+    async def _physical_completion_ready(cups_job_id: str) -> tuple[bool, str]:
+        if settings.printer_mode != "cups":
+            return True, "non_cups"
+        snap = health_holder.last_telemetry
+        if snap is not None:
+            from app.printer_telemetry.types import DisplayState, OperationalState
+
+            if snap.operational_state == OperationalState.PRINTING:
+                return False, "printer_operational_printing"
+            if snap.display_state == DisplayState.PRINTING:
+                return False, "printer_display_printing"
+        if hasattr(printer, "get_printer_info"):
+            info = await printer.get_printer_info()
+            if info.get("printing"):
+                return False, "cups_printer_status_printing"
+        return True, "printer_quiescent"
+
     job_manager = JobManager(
         db=db,
         downloader=downloader,
@@ -127,8 +146,10 @@ async def _run() -> None:
         incoming_dir=settings.incoming_dir,
         poll_interval_seconds=settings.job_poll_interval_seconds,
         retry_policy=retry_policy,
+        physical_completion_checker=_physical_completion_ready
+        if settings.printer_mode == "cups"
+        else None,
     )
-    health_holder = _HealthHolder()
     ws_client = WebSocketClient(settings, job_manager, health_provider=health_holder)
 
     job_manager.start()

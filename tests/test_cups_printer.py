@@ -86,6 +86,9 @@ async def test_job_status_pending_processing_completed():
     runner.responses[("lpstat", "-o", "P")] = CommandResult(
         0, "P-1 user  processing", ""
     )
+    runner.responses[("lpstat", "-l", "-o", "P-1")] = CommandResult(
+        0, "job-state: Processing\n", ""
+    )
     st = await printer.get_status("P-1")
     assert st.state == PrinterJobState.PRINTING
 
@@ -93,8 +96,27 @@ async def test_job_status_pending_processing_completed():
     runner.responses[("lpstat", "-W", "completed", "-o", "P")] = CommandResult(
         0, "P-1 user  completed", ""
     )
+    runner.responses[("lpstat", "-l", "-o", "P-1")] = CommandResult(
+        0, "job-state: Completed\n", ""
+    )
     st = await printer.get_status("P-1")
     assert st.state == PrinterJobState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_get_status_rendering_completed_stays_printing():
+    runner = FakeCupsRunner()
+    printer = CupsPrinter("quickprint-printer", runner=runner)
+    runner.responses[("lpstat", "-o", "quickprint-printer")] = CommandResult(
+        0,
+        "quickprint-printer-64 user 1283072 Rendering completed",
+        "",
+    )
+    runner.responses[("lpstat", "-l", "-o", "quickprint-printer-64")] = CommandResult(
+        0, "job-state: Processing\n", ""
+    )
+    st = await printer.get_status("quickprint-printer-64")
+    assert st.state == PrinterJobState.PRINTING
 
 
 @pytest.mark.asyncio
@@ -127,7 +149,7 @@ async def test_get_status_completed_job_only_in_completed_queue():
 
     st = await printer.get_status("quickprint-test-4")
     assert st.state == PrinterJobState.COMPLETED
-    assert st.message == "CUPS job completed"
+    assert st.message == "CUPS job in completed queue"
 
 
 @pytest.mark.asyncio
